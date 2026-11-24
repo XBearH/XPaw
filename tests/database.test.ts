@@ -46,4 +46,14 @@ describe("XPawDatabase", () => {
     database.saveCharacterOverride({ characterId: "test-agent", name: "New Name", description: "Description", role: "Assistant", summary: "Summary", tone: "Clear" });
     expect(database.getCharacterOverride("test-agent")).toMatchObject({ name: "New Name", tone: "Clear" });
   });
+
+  it("marks unfinished tasks as interrupted after a restart", () => {
+    const conversationId = database.createConversation("test-agent", "Task");
+    const taskId = database.createTask(conversationId, "Read a file");
+    database.updateTask(taskId, "running", { plan: "Read the requested file." });
+    database.addTaskEvent(taskId, "running", "Task started.");
+    database.markRunningTasksInterrupted();
+    expect(database.listTasks()[0]).toMatchObject({ id: taskId, status: "interrupted", plan: "Read the requested file." });
+    expect(database.getTaskEvents(taskId)).toHaveLength(1);
+  });
 });

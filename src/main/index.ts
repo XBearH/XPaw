@@ -103,17 +103,29 @@ function createWindow(): void {
 
 app.whenReady().then(async () => {
   await bootstrapRuntime();
+  database.markRunningTasksInterrupted();
   ipcMain.handle("xpaw:start-stream", async (event, input: { requestId: string; message: string }) => {
     if (!input?.requestId || !input.message?.trim()) throw new Error("A request ID and message are required.");
     if (activeRequests.has(input.requestId)) throw new Error("This request is already active.");
     const controller = new AbortController();
     activeRequests.set(input.requestId, controller);
+    const taskId = database.createTask(conversationId, input.message);
+    let timedOut = false;
+    const timeout = setTimeout(() => { timedOut = true; controller.abort(); }, 5 * 60_000);
     void (async () => {
       try {
-        for await (const streamEvent of agent.streamRespond(conversationId, input.message, controller.signal)) {
-          event.sender.send("xpaw:stream-event", { requestId: input.requestId, ...streamEvent });
+        event.sender.send("xpaw:stream-event", { requestId: input.requestId, type: "task", taskId });
+        for await (const streamEvent of agent.streamRespond(conversationId, input.message, controller.signal, taskId)) {
+          event.sender.send("xpaw:stream-event", { requestId: input.requestId, taskId, ...streamEvent });
         }
-      } finally { activeRequests.delete(input.requestId); }
+      } finally {
+        clearTimeout(timeout);
+        if (timedOut) {
+          database.updateTask(taskId, "failed", { error: "任务超过 5 分钟总时限。" });
+          database.addTaskEvent(taskId, "timeout", "任务超过 5 分钟总时限，已停止。");
+        }
+        activeRequests.delete(input.requestId);
+      }
     })();
     return { started: true };
   });
@@ -133,6 +145,13 @@ app.whenReady().then(async () => {
   ipcMain.handle("xpaw:delete-conversation", (_event, id: number) => database.deleteConversation(id));
   ipcMain.handle("xpaw:get-config", () => ({ provider: activeProfile.provider, modelId: activeProfile.modelId, workspacePath, local: activeProfile.local }));
   ipcMain.handle("xpaw:get-usage", (_event, filter?: { modelId?: string; days?: number }) => database.getUsageSummary(filter?.modelId, filter?.days));
+  ipcMain.handle("xpaw:list-tasks", () => database.listTasks());
+  ipcMain.handle("xpaw:get-task-events", (_event, taskId: number) => database.getTaskEvents(taskId));
+  ipcMain.handle("xpaw:rerun-task", async (_event, taskId: number) => {
+    const task = database.listTasks().find((item) => item.id === taskId);
+    if (!task) throw new Error("任务不存在。");
+    return { objective: task.objective };
+  });
   ipcMain.handle("xpaw:list-models", () => listLocalModels());
   ipcMain.handle("xpaw:list-profiles", () => database.listModelProfiles());
   ipcMain.handle("xpaw:save-profile", async (_event, input: { profile: Omit<ModelProfile, "createdAt" | "updatedAt">; apiKey?: string }) => {

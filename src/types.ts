@@ -72,3 +72,25 @@ export interface ModelProfile {
   createdAt: string;
   updatedAt: string;
 }
+
+export type TaskStatus = "queued" | "planning" | "awaiting_confirmation" | "running" | "completed" | "failed" | "cancelled" | "interrupted";
+
+export interface TaskSummary {
+  id: number;
+  conversationId: number;
+  objective: string;
+  status: TaskStatus;
+  plan: string | null;
+  error: string | null;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface TaskEvent {
+  id: number;
+  taskId: number;
+  type: string;
+  message: string;
+  data: string | null;
+  createdAt: string;
+}

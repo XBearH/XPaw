@@ -64,13 +64,20 @@ export class Agent {
     return content;
   }
 
-  async *streamRespond(conversationId: number, userInput: string, signal?: AbortSignal): AsyncGenerator<AgentStreamEvent> {
+  async *streamRespond(conversationId: number, userInput: string, signal?: AbortSignal, taskId?: number): AsyncGenerator<AgentStreamEvent> {
     this.database.saveMessage(conversationId, { role: "user", content: userInput });
     const messages: ChatMessage[] = [{ role: "system", content: this.systemPrompt }, ...this.database.getMessages(conversationId)];
     let finalContent = "";
+    if (taskId) {
+      const plan = "理解请求 -> 按需调用受限工具 -> 返回可验证结果";
+      this.database.updateTask(taskId, "planning", { plan });
+      this.database.addTaskEvent(taskId, "plan", plan);
+      this.database.updateTask(taskId, "running");
+      this.database.addTaskEvent(taskId, "running", "开始执行任务。");
+    }
     try {
       for (let step = 0; step < 12; step += 1) {
-        if (signal?.aborted) { yield { type: "cancelled" }; return; }
+        if (signal?.aborted) { if (taskId) { this.database.updateTask(taskId, "cancelled"); this.database.addTaskEvent(taskId, "cancelled", "用户停止了任务。"); } yield { type: "cancelled" }; return; }
         const startedAt = Date.now();
         let response;
         try {
@@ -84,31 +91,38 @@ export class Agent {
         } catch (error) {
           if (signal?.aborted || (error instanceof DOMException && error.name === "AbortError")) {
             this.database.recordModelRun({ conversationId, provider: this.modelInfo.provider, modelId: this.modelInfo.modelId, durationMs: Date.now() - startedAt, status: "cancelled" });
+            if (taskId) { this.database.updateTask(taskId, "cancelled"); this.database.addTaskEvent(taskId, "cancelled", "模型请求被取消或超时。 "); }
             yield { type: "cancelled" };
             return;
           }
           this.database.recordModelRun({ conversationId, provider: this.modelInfo.provider, modelId: this.modelInfo.modelId, durationMs: Date.now() - startedAt, status: "failed" });
+          if (taskId) { this.database.updateTask(taskId, "failed", { error: error instanceof Error ? error.message : String(error) }); this.database.addTaskEvent(taskId, "failed", "模型请求失败。", { error: error instanceof Error ? error.message : String(error) }); }
           throw error;
         }
         if (response.toolCalls.length === 0) {
           const content = finalContent || response.content || "I did not receive a usable response from the model.";
           this.database.saveMessage(conversationId, { role: "assistant", content });
+          if (taskId) { this.database.updateTask(taskId, "completed"); this.database.addTaskEvent(taskId, "completed", "任务已完成。", { usage: response.usage }); }
           yield { type: "completed", content, usage: response.usage };
           return;
         }
         messages.push({ role: "assistant", content: response.content ?? "", toolCalls: response.toolCalls });
         finalContent = "";
         for (const call of response.toolCalls) {
+          if (taskId && call.function.name === "write_file") { this.database.updateTask(taskId, "awaiting_confirmation"); this.database.addTaskEvent(taskId, "awaiting_confirmation", "等待用户确认文件写入。", { tool: call.function.name }); }
           yield { type: "tool_started", name: call.function.name };
           const result = await this.executeTool(conversationId, call);
+          if (taskId) { this.database.updateTask(taskId, "running"); this.database.addTaskEvent(taskId, "tool", `${call.function.name}：${result.summary}`); }
           messages.push({ role: "tool", content: `${call.function.name}: ${result.content}`, toolCallId: call.id });
           yield { type: "tool_finished", name: call.function.name, summary: result.summary };
         }
       }
       const content = "I stopped because the task exceeded the safety limit of 12 tool calls.";
       this.database.saveMessage(conversationId, { role: "assistant", content });
+      if (taskId) { this.database.updateTask(taskId, "failed", { error: content }); this.database.addTaskEvent(taskId, "failed", content); }
       yield { type: "completed", content };
     } catch (error) {
+      if (taskId) { this.database.updateTask(taskId, "failed", { error: error instanceof Error ? error.message : String(error) }); this.database.addTaskEvent(taskId, "failed", "任务运行时异常。", { error: error instanceof Error ? error.message : String(error) }); }
       yield { type: "failed", message: error instanceof Error ? error.message : String(error) };
     }
   }

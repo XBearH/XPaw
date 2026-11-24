@@ -1,7 +1,7 @@
 import Database from "better-sqlite3";
 import { mkdirSync } from "node:fs";
 import { dirname } from "node:path";
-import type { ChatMessage, ModelProfile } from "./types.js";
+import type { ChatMessage, ModelProfile, TaskEvent, TaskStatus, TaskSummary } from "./types.js";
 
 export class XPawDatabase {
   private readonly db: Database.Database;
@@ -74,6 +74,24 @@ export class XPawDatabase {
         tone TEXT NOT NULL,
         updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
       );
+      CREATE TABLE IF NOT EXISTS tasks (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        conversation_id INTEGER NOT NULL REFERENCES conversations(id),
+        objective TEXT NOT NULL,
+        status TEXT NOT NULL,
+        plan TEXT,
+        error TEXT,
+        created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+        updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+      );
+      CREATE TABLE IF NOT EXISTS task_events (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        task_id INTEGER NOT NULL REFERENCES tasks(id),
+        type TEXT NOT NULL,
+        message TEXT NOT NULL,
+        data TEXT,
+        created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+      );
     `);
   }
 
@@ -125,6 +143,31 @@ export class XPawDatabase {
     this.db.prepare(`INSERT INTO character_overrides (character_id, name, description, role, summary, tone)
       VALUES (@characterId, @name, @description, @role, @summary, @tone)
       ON CONFLICT(character_id) DO UPDATE SET name = excluded.name, description = excluded.description, role = excluded.role, summary = excluded.summary, tone = excluded.tone, updated_at = CURRENT_TIMESTAMP`).run(input);
+  }
+
+  markRunningTasksInterrupted(): void {
+    this.db.prepare("UPDATE tasks SET status = 'interrupted', updated_at = CURRENT_TIMESTAMP WHERE status IN ('queued', 'planning', 'awaiting_confirmation', 'running')").run();
+  }
+
+  createTask(conversationId: number, objective: string): number {
+    const result = this.db.prepare("INSERT INTO tasks (conversation_id, objective, status) VALUES (?, ?, 'queued')").run(conversationId, objective);
+    return Number(result.lastInsertRowid);
+  }
+
+  updateTask(id: number, status: TaskStatus, options: { plan?: string | null; error?: string | null } = {}): void {
+    this.db.prepare("UPDATE tasks SET status = @status, plan = COALESCE(@plan, plan), error = @error, updated_at = CURRENT_TIMESTAMP WHERE id = @id").run({ id, status, plan: options.plan ?? null, error: options.error ?? null });
+  }
+
+  addTaskEvent(taskId: number, type: string, message: string, data?: unknown): void {
+    this.db.prepare("INSERT INTO task_events (task_id, type, message, data) VALUES (?, ?, ?, ?)").run(taskId, type, message, data === undefined ? null : JSON.stringify(data));
+  }
+
+  listTasks(): TaskSummary[] {
+    return this.db.prepare("SELECT id, conversation_id AS conversationId, objective, status, plan, error, created_at AS createdAt, updated_at AS updatedAt FROM tasks ORDER BY updated_at DESC LIMIT 100").all() as TaskSummary[];
+  }
+
+  getTaskEvents(taskId: number): TaskEvent[] {
+    return this.db.prepare("SELECT id, task_id AS taskId, type, message, data, created_at AS createdAt FROM task_events WHERE task_id = ? ORDER BY id ASC").all(taskId) as TaskEvent[];
   }
 
   saveMessage(conversationId: number, message: ChatMessage): void {

@@ -100,7 +100,7 @@ export class XPawDatabase {
     completionTokens?: number;
     totalTokens?: number;
     durationMs: number;
-    status: "completed" | "failed";
+    status: "completed" | "failed" | "cancelled";
   }): void {
     this.db.prepare(`
       INSERT INTO model_runs (conversation_id, provider, model_id, prompt_tokens, completion_tokens, total_tokens, duration_ms, status)

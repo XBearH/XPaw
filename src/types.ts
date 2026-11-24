@@ -30,7 +30,20 @@ export interface ModelUsage {
 
 export interface ModelClient {
   chat(messages: ChatMessage[], tools: ToolDefinition[]): Promise<ModelResponse>;
+  streamChat(messages: ChatMessage[], tools: ToolDefinition[], signal?: AbortSignal): AsyncGenerator<ModelStreamEvent>;
 }
+
+export type ModelStreamEvent =
+  | { type: "text_delta"; delta: string }
+  | { type: "completed"; response: ModelResponse };
+
+export type AgentStreamEvent =
+  | { type: "text_delta"; delta: string }
+  | { type: "tool_started"; name: string }
+  | { type: "tool_finished"; name: string; summary: string }
+  | { type: "completed"; content: string; usage?: ModelUsage }
+  | { type: "cancelled" }
+  | { type: "failed"; message: string };
 
 export interface ToolDefinition {
   type: "function";

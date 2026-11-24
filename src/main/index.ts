@@ -19,6 +19,7 @@ const apiKey = process.env.XPAW_MODEL_API_KEY;
 let database: XPawDatabase;
 let agent: Agent;
 let conversationId: number;
+const activeRequests = new Map<string, AbortController>();
 
 async function bootstrapRuntime(): Promise<void> {
   await mkdir(workspacePath, { recursive: true });
@@ -75,7 +76,21 @@ function createWindow(): void {
 
 app.whenReady().then(async () => {
   await bootstrapRuntime();
-  ipcMain.handle("xpaw:send-message", async (_event, message: string) => ({ answer: await agent.respond(conversationId, message) }));
+  ipcMain.handle("xpaw:start-stream", async (event, input: { requestId: string; message: string }) => {
+    if (!input?.requestId || !input.message?.trim()) throw new Error("A request ID and message are required.");
+    if (activeRequests.has(input.requestId)) throw new Error("This request is already active.");
+    const controller = new AbortController();
+    activeRequests.set(input.requestId, controller);
+    void (async () => {
+      try {
+        for await (const streamEvent of agent.streamRespond(conversationId, input.message, controller.signal)) {
+          event.sender.send("xpaw:stream-event", { requestId: input.requestId, ...streamEvent });
+        }
+      } finally { activeRequests.delete(input.requestId); }
+    })();
+    return { started: true };
+  });
+  ipcMain.handle("xpaw:cancel-stream", (_event, requestId: string) => activeRequests.get(requestId)?.abort());
   ipcMain.handle("xpaw:get-config", () => ({ provider, modelId, workspacePath, local: provider === "ollama" }));
   ipcMain.handle("xpaw:get-usage", () => database.getUsageSummary());
   ipcMain.handle("xpaw:list-models", () => listLocalModels());

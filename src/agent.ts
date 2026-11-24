@@ -1,6 +1,6 @@
 import type { XPawDatabase } from "./database.js";
 import { toolDefinitions, WorkspaceTools } from "./tools.js";
-import type { ChatMessage, ModelClient, ToolCall, ToolResult } from "./types.js";
+import type { AgentStreamEvent, ChatMessage, ModelClient, ToolCall, ToolResult } from "./types.js";
 
 export type Confirm = (question: string) => Promise<boolean>;
 
@@ -62,6 +62,55 @@ export class Agent {
     const content = "I stopped because the task exceeded the safety limit of 12 tool calls.";
     this.database.saveMessage(conversationId, { role: "assistant", content });
     return content;
+  }
+
+  async *streamRespond(conversationId: number, userInput: string, signal?: AbortSignal): AsyncGenerator<AgentStreamEvent> {
+    this.database.saveMessage(conversationId, { role: "user", content: userInput });
+    const messages: ChatMessage[] = [{ role: "system", content: this.systemPrompt }, ...this.database.getMessages(conversationId)];
+    let finalContent = "";
+    try {
+      for (let step = 0; step < 12; step += 1) {
+        if (signal?.aborted) { yield { type: "cancelled" }; return; }
+        const startedAt = Date.now();
+        let response;
+        try {
+          const stream = this.model.streamChat(messages, toolDefinitions, signal);
+          for await (const event of stream) {
+            if (event.type === "text_delta") { finalContent += event.delta; yield event; }
+            else response = event.response;
+          }
+          if (!response) throw new Error("The model stream ended without a final response.");
+          this.database.recordModelRun({ conversationId, provider: this.modelInfo.provider, modelId: this.modelInfo.modelId, ...response.usage, durationMs: Date.now() - startedAt, status: "completed" });
+        } catch (error) {
+          if (signal?.aborted || (error instanceof DOMException && error.name === "AbortError")) {
+            this.database.recordModelRun({ conversationId, provider: this.modelInfo.provider, modelId: this.modelInfo.modelId, durationMs: Date.now() - startedAt, status: "cancelled" });
+            yield { type: "cancelled" };
+            return;
+          }
+          this.database.recordModelRun({ conversationId, provider: this.modelInfo.provider, modelId: this.modelInfo.modelId, durationMs: Date.now() - startedAt, status: "failed" });
+          throw error;
+        }
+        if (response.toolCalls.length === 0) {
+          const content = finalContent || response.content || "I did not receive a usable response from the model.";
+          this.database.saveMessage(conversationId, { role: "assistant", content });
+          yield { type: "completed", content, usage: response.usage };
+          return;
+        }
+        messages.push({ role: "assistant", content: response.content ?? "", toolCalls: response.toolCalls });
+        finalContent = "";
+        for (const call of response.toolCalls) {
+          yield { type: "tool_started", name: call.function.name };
+          const result = await this.executeTool(conversationId, call);
+          messages.push({ role: "tool", content: `${call.function.name}: ${result.content}`, toolCallId: call.id });
+          yield { type: "tool_finished", name: call.function.name, summary: result.summary };
+        }
+      }
+      const content = "I stopped because the task exceeded the safety limit of 12 tool calls.";
+      this.database.saveMessage(conversationId, { role: "assistant", content });
+      yield { type: "completed", content };
+    } catch (error) {
+      yield { type: "failed", message: error instanceof Error ? error.message : String(error) };
+    }
   }
 
   private async executeTool(conversationId: number, call: ToolCall): Promise<ToolResult> {

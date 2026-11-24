@@ -23,5 +23,6 @@ describe("compileSystemPrompt", () => {
     expect(prompt).toContain("D:/Workspace");
     expect(prompt).toContain("Do not guess.");
     expect(prompt).toContain("Writing files requires explicit confirmation");
+    expect(prompt).toContain("call the relevant file tool before answering");
   });
 });

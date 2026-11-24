@@ -21,6 +21,10 @@ export interface ModelResponse {
   toolCalls: ToolCall[];
 }
 
+export interface ModelClient {
+  chat(messages: ChatMessage[], tools: ToolDefinition[]): Promise<ModelResponse>;
+}
+
 export interface ToolDefinition {
   type: "function";
   function: {

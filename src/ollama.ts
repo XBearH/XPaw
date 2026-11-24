@@ -1,4 +1,4 @@
-import type { ChatMessage, ModelResponse, ToolCall, ToolDefinition } from "./types.js";
+import type { ChatMessage, ModelClient, ModelResponse, ToolCall, ToolDefinition } from "./types.js";
 
 interface OpenAiResponse {
   choices?: Array<{
@@ -10,16 +10,20 @@ interface OpenAiResponse {
   error?: { message?: string };
 }
 
-export class OllamaClient {
+export class OpenAiCompatibleClient implements ModelClient {
   constructor(
     private readonly baseUrl: string,
     private readonly model: string,
+    private readonly apiKey?: string,
   ) {}
 
   async chat(messages: ChatMessage[], tools: ToolDefinition[]): Promise<ModelResponse> {
     const response = await fetch(`${this.baseUrl.replace(/\/$/, "")}/chat/completions`, {
       method: "POST",
-      headers: { "content-type": "application/json" },
+      headers: {
+        "content-type": "application/json",
+        ...(this.apiKey ? { authorization: `Bearer ${this.apiKey}` } : {}),
+      },
       body: JSON.stringify({
         model: this.model,
         messages: messages.map((message) => ({

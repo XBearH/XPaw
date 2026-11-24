@@ -1,13 +1,12 @@
 import type { XPawDatabase } from "./database.js";
-import type { OllamaClient } from "./ollama.js";
 import { toolDefinitions, WorkspaceTools } from "./tools.js";
-import type { ChatMessage, ToolCall, ToolResult } from "./types.js";
+import type { ChatMessage, ModelClient, ToolCall, ToolResult } from "./types.js";
 
 export type Confirm = (question: string) => Promise<boolean>;
 
 export class Agent {
   constructor(
-    private readonly model: OllamaClient,
+    private readonly model: ModelClient,
     private readonly database: XPawDatabase,
     private readonly tools: WorkspaceTools,
     private readonly confirm: Confirm,

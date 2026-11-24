@@ -73,7 +73,11 @@ export class XPawDatabase {
     this.db.prepare(`
       INSERT INTO tool_runs (conversation_id, tool_name, arguments_json, authorization_state, status, result_summary, error)
       VALUES (@conversationId, @toolName, @argumentsJson, @authorizationState, @status, @resultSummary, @error)
-    `).run(input);
+    `).run({
+      ...input,
+      resultSummary: input.resultSummary ?? null,
+      error: input.error ?? null,
+    });
   }
 
   close(): void {

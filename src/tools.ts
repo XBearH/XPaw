@@ -16,8 +16,8 @@ export const toolDefinitions: ToolDefinition[] = [
       description: "List files and directories inside the authorized local workspace. Paths are relative to that workspace.",
       parameters: {
         type: "object",
-        properties: { path: { type: "string", description: "Relative directory path, default '.'" } },
-        required: [],
+        properties: { path: { type: "string", description: "Relative directory path. Use '.' for the workspace root." } },
+        required: ["path"],
         additionalProperties: false,
       },
     },

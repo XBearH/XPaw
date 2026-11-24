@@ -1,0 +1,9 @@
+node_modules/
+dist/
+.env
+data/
+workspace/*
+!workspace/.gitkeep
+docs/DEVELOPMENT_NOTES.md
+coverage/
+*.log

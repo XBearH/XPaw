@@ -3,6 +3,7 @@ import { contextBridge, ipcRenderer } from "electron";
 contextBridge.exposeInMainWorld("xpaw", {
   startStream: (requestId: string, message: string) => ipcRenderer.invoke("xpaw:start-stream", { requestId, message }),
   cancelStream: (requestId: string) => ipcRenderer.invoke("xpaw:cancel-stream", requestId),
+  newConversation: () => ipcRenderer.invoke("xpaw:new-conversation"),
   onStreamEvent: (listener: (event: unknown) => void) => {
     const handler = (_event: Electron.IpcRendererEvent, payload: unknown) => listener(payload);
     ipcRenderer.on("xpaw:stream-event", handler);

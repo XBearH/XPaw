@@ -91,6 +91,11 @@ app.whenReady().then(async () => {
     return { started: true };
   });
   ipcMain.handle("xpaw:cancel-stream", (_event, requestId: string) => activeRequests.get(requestId)?.abort());
+  ipcMain.handle("xpaw:new-conversation", async () => {
+    const character = await loadCharacterCard(join(root, "characters", "default.yaml"));
+    conversationId = database.createConversation(character.id, "Desktop session");
+    return { conversationId };
+  });
   ipcMain.handle("xpaw:get-config", () => ({ provider, modelId, workspacePath, local: provider === "ollama" }));
   ipcMain.handle("xpaw:get-usage", () => database.getUsageSummary());
   ipcMain.handle("xpaw:list-models", () => listLocalModels());

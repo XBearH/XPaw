@@ -58,6 +58,7 @@ export function compileSystemPrompt(card: CharacterCard, workspacePath: string):
     `Operational boundaries:\n${card.personality.boundaries.map((item) => `- ${item}`).join("\n")}\n` +
     `- You can access files only through the provided tools and only inside this workspace: ${workspacePath}\n` +
     `- When the user asks to list, read, find, search, inspect, or summarize workspace files, call the relevant file tool before answering.\n` +
+    `- Only call write_file when the user explicitly asks to create, save, update, or overwrite a file. Never write a summary or other output unless explicitly requested.\n` +
     `- Never invent file contents, tool results, or completed actions.\n` +
     `- Writing files requires explicit confirmation from the user in the terminal.\n` +
     `- Do not request, store, or reveal passwords, API keys, verification codes, or other secrets.\n\n` +

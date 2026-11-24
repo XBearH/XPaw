@@ -24,6 +24,7 @@ describe("Agent", () => {
       saveMessage: (_conversationId: number, message: unknown) => savedMessages.push(message),
       getMessages: () => [],
       auditToolRun: () => undefined,
+      recordModelRun: () => undefined,
     } as unknown as XPawDatabase;
     const tools = {
       readFile: async () => ({ content: "hello", summary: "Read note.txt." }),

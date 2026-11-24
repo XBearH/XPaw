@@ -31,6 +31,7 @@ async function main(): Promise<void> {
     new WorkspaceTools(workspacePath),
     async (question) => (await readline.question(`${question} [y/N] `)).trim().toLowerCase() === "y",
     compileSystemPrompt(character, workspacePath),
+    { provider, modelId: modelName },
   );
 
   console.log(`\n${character.name} v0.1`);

@@ -11,6 +11,7 @@ export class Agent {
     private readonly tools: WorkspaceTools,
     private readonly confirm: Confirm,
     private readonly systemPrompt: string,
+    private readonly modelInfo: { provider: string; modelId: string } = { provider: "unknown", modelId: "unknown" },
   ) {}
 
   async respond(conversationId: number, userInput: string): Promise<string> {
@@ -21,7 +22,25 @@ export class Agent {
     ];
 
     for (let step = 0; step < 12; step += 1) {
-      const response = await this.model.chat(messages, toolDefinitions);
+      const startedAt = Date.now();
+      let response;
+      try {
+        response = await this.model.chat(messages, toolDefinitions);
+        this.database.recordModelRun({
+          conversationId,
+          provider: this.modelInfo.provider,
+          modelId: this.modelInfo.modelId,
+          ...response.usage,
+          durationMs: Date.now() - startedAt,
+          status: "completed",
+        });
+      } catch (error) {
+        this.database.recordModelRun({
+          conversationId, provider: this.modelInfo.provider, modelId: this.modelInfo.modelId,
+          durationMs: Date.now() - startedAt, status: "failed",
+        });
+        throw error;
+      }
       if (response.toolCalls.length === 0) {
         const content = response.content || "I did not receive a usable response from the model.";
         this.database.saveMessage(conversationId, { role: "assistant", content });

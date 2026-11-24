@@ -40,6 +40,18 @@ export class XPawDatabase {
         error TEXT,
         created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
       );
+      CREATE TABLE IF NOT EXISTS model_runs (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        conversation_id INTEGER NOT NULL REFERENCES conversations(id),
+        provider TEXT NOT NULL,
+        model_id TEXT NOT NULL,
+        prompt_tokens INTEGER,
+        completion_tokens INTEGER,
+        total_tokens INTEGER,
+        duration_ms INTEGER NOT NULL,
+        status TEXT NOT NULL,
+        created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+      );
     `);
   }
 
@@ -78,6 +90,42 @@ export class XPawDatabase {
       resultSummary: input.resultSummary ?? null,
       error: input.error ?? null,
     });
+  }
+
+  recordModelRun(input: {
+    conversationId: number;
+    provider: string;
+    modelId: string;
+    promptTokens?: number;
+    completionTokens?: number;
+    totalTokens?: number;
+    durationMs: number;
+    status: "completed" | "failed";
+  }): void {
+    this.db.prepare(`
+      INSERT INTO model_runs (conversation_id, provider, model_id, prompt_tokens, completion_tokens, total_tokens, duration_ms, status)
+      VALUES (@conversationId, @provider, @modelId, @promptTokens, @completionTokens, @totalTokens, @durationMs, @status)
+    `).run({
+      ...input,
+      promptTokens: input.promptTokens ?? null,
+      completionTokens: input.completionTokens ?? null,
+      totalTokens: input.totalTokens ?? null,
+    });
+  }
+
+  getUsageSummary(): { totalTokens: number; todayTokens: number; requests: number; daily: Array<{ date: string; tokens: number }> } {
+    const totals = this.db.prepare(`
+      SELECT COALESCE(SUM(total_tokens), 0) AS totalTokens,
+             COALESCE(SUM(CASE WHEN date(created_at, 'localtime') = date('now', 'localtime') THEN total_tokens ELSE 0 END), 0) AS todayTokens,
+             COUNT(*) AS requests
+      FROM model_runs WHERE status = 'completed'
+    `).get() as { totalTokens: number; todayTokens: number; requests: number };
+    const daily = this.db.prepare(`
+      SELECT date(created_at, 'localtime') AS date, COALESCE(SUM(total_tokens), 0) AS tokens
+      FROM model_runs WHERE status = 'completed' AND created_at >= datetime('now', '-364 days')
+      GROUP BY date(created_at, 'localtime') ORDER BY date ASC
+    `).all() as Array<{ date: string; tokens: number }>;
+    return { ...totals, daily };
   }
 
   close(): void {

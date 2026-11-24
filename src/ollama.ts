@@ -8,6 +8,7 @@ interface OpenAiResponse {
     };
   }>;
   error?: { message?: string };
+  usage?: { prompt_tokens?: number; completion_tokens?: number; total_tokens?: number };
 }
 
 export class OpenAiCompatibleClient implements ModelClient {
@@ -34,7 +35,8 @@ export class OpenAiCompatibleClient implements ModelClient {
         })),
         tools,
         tool_choice: "auto",
-        max_tokens: 512,
+        max_tokens: 384,
+        temperature: 0.35,
         stream: false,
       }),
       signal: AbortSignal.timeout(120_000),
@@ -43,6 +45,14 @@ export class OpenAiCompatibleClient implements ModelClient {
     if (!response.ok) throw new Error(data.error?.message || `Model request failed with status ${response.status}.`);
     const message = data.choices?.[0]?.message;
     if (!message) throw new Error("Model response did not include a message.");
-    return { content: message.content ?? null, toolCalls: message.tool_calls ?? [] };
+    return {
+      content: message.content ?? null,
+      toolCalls: message.tool_calls ?? [],
+      usage: data.usage ? {
+        promptTokens: data.usage.prompt_tokens,
+        completionTokens: data.usage.completion_tokens,
+        totalTokens: data.usage.total_tokens,
+      } : undefined,
+    };
   }
 }

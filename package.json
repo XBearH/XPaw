@@ -4,11 +4,16 @@
   "private": true,
   "description": "A local-first terminal AI character agent.",
   "type": "module",
+  "main": "./out/main/index.js",
   "scripts": {
     "dev": "tsx src/index.ts",
+    "desktop": "npm run rebuild:electron && electron-vite dev",
+    "desktop:build": "npm run rebuild:electron && electron-vite build",
+    "rebuild:electron": "electron-rebuild -f -w better-sqlite3",
+    "rebuild:node": "npm rebuild better-sqlite3",
     "start": "tsx src/index.ts",
     "build": "tsc -p tsconfig.json",
-    "test": "vitest run",
+    "test": "npm run rebuild:node && vitest run",
     "test:watch": "vitest",
     "lint": "tsc -p tsconfig.json --noEmit"
   },
@@ -16,17 +21,30 @@
     "node": ">=22"
   },
   "dependencies": {
-    "better-sqlite3": "^12.6.2",
+    "@electron-toolkit/preload": "^3.0.2",
+    "@vitejs/plugin-react": "^6.3.0",
+    "better-sqlite3": "^13.2.0",
     "dotenv": "^17.2.3",
+    "electron": "^45.4.1",
     "js-yaml": "^4.1.0",
+    "react": "^19.3.1",
+    "react-dom": "^19.3.1",
     "zod": "^4.1.12"
   },
   "devDependencies": {
+    "@electron/rebuild": "^4.2.1",
     "@types/better-sqlite3": "^7.6.13",
     "@types/js-yaml": "^4.0.9",
     "@types/node": "^24.10.0",
+    "@types/react": "^19.3.0",
+    "@types/react-dom": "^19.3.0",
+    "concurrently": "^10.0.7",
+    "cross-env": "^10.1.0",
+    "electron-vite": "^6.0.0",
     "tsx": "^4.20.6",
     "typescript": "^5.9.3",
-    "vitest": "^4.0.8"
+    "vite": "^8.3.8",
+    "vitest": "^4.0.8",
+    "wait-on": "^9.5.1"
   }
 }

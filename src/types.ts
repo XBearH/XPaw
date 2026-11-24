@@ -19,6 +19,13 @@ export interface ToolCall {
 export interface ModelResponse {
   content: string | null;
   toolCalls: ToolCall[];
+  usage?: ModelUsage;
+}
+
+export interface ModelUsage {
+  promptTokens?: number;
+  completionTokens?: number;
+  totalTokens?: number;
 }
 
 export interface ModelClient {

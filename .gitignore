@@ -6,6 +6,7 @@ data/
 workspace/*
 !workspace/.gitkeep
 docs/DEVELOPMENT_NOTES.md
+docs/USER_MANUAL.md
 coverage/
 *.log
 OllamaSetup*.exe

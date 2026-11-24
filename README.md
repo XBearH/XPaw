@@ -1,25 +1,18 @@
 # XPaw
 
-XPaw is a local-first terminal AI character agent. Version `0.1.0` is intentionally small: it loads a validated character card, chats through a local Ollama-compatible API, stores sessions in SQLite, and exposes file tools only inside an explicit workspace.
+XPaw is a local-first desktop AI character and task agent. It supports ordinary conversation and fictional roleplay as well as permission-gated local tasks. Characters, conversations, task audits, and usage records stay on the device by default.
 
-## v0.1 capabilities
+## Current Features
 
-- YAML character cards validated with Zod.
-- Ollama and external OpenAI-compatible chat endpoints.
-- Persistent conversations and tool audit records in local SQLite.
-- Read, list, and search files only inside a configured workspace.
-- Write files only after explicit terminal confirmation.
-- Path traversal protection and a hard limit of 12 tool calls per request.
-
-## v0.2 desktop capabilities
-
-- Electron + React desktop workspace with streamed local model responses and a stop button.
-- Model profiles for local Ollama and OpenAI-compatible cloud endpoints.
-- Local model parameters: temperature, maximum output tokens, and tool-calling toggle.
-- Cloud API keys encrypted through Electron safe storage; keys are not stored in SQLite, character cards, or Git.
-- Persistent conversations with create, restore, rename, and delete actions.
-- Local character overrides for name, description, role, summary, and tone.
+- Electron + React desktop application with streamed model output and stop generation.
+- Character cards validated with Zod, plus local character overrides for identity and speaking style.
+- Natural conversation and fictional roleplay without requiring a file task.
+- Local Ollama profiles and OpenAI-compatible cloud model profiles.
+- Encrypted cloud API keys through Electron safe storage; keys are not stored in SQLite, character cards, or Git.
+- Persistent conversations: create, restore, rename, delete, copy an answer, and regenerate the latest answer.
 - Token usage summary and daily heatmap, filterable by model and date range.
+- Persistent agent tasks with plans, confirmations, tool events, cancellation, time limits, audit history, and safe rerun.
+- Workspace-scoped file list, read, search, and confirmation-gated text-file write tools.
 
 ## Requirements
 
@@ -29,11 +22,11 @@ XPaw is a local-first terminal AI character agent. Version `0.1.0` is intentiona
 
 ## Start
 
-On the current machine, Ollama and `qwen2.5:3b` are already installed and the local Ollama server is running. Start XPaw with:
+On the current machine, Ollama and `qwen2.5:3b` are already installed. Start the desktop application with:
 
 ```powershell
 Set-Location D:\XPaw
-npm run dev
+npm run desktop
 ```
 
 For a fresh machine:
@@ -43,7 +36,7 @@ Copy-Item .env.example .env
 npm install
 & 'D:\Ollama\ollama.exe' pull qwen2.5:3b
 ollama serve
-npm run dev
+npm run desktop
 ```
 
 On this machine Ollama is installed at `D:\Ollama` and models are stored at `D:\OllamaModels`. The local server is already running. The default endpoint is `http://127.0.0.1:11434/v1` and the default model is `qwen2.5:3b`.
@@ -61,16 +54,7 @@ XPAW_MODEL_NAME=qwen2.5:3b
 XPAW_WORKSPACE=C:\Users\your-name\Documents\XPawWorkspace
 ```
 
-To use an external API which implements the OpenAI Chat Completions tool-calling format:
-
-```dotenv
-XPAW_MODEL_PROVIDER=openai-compatible
-XPAW_MODEL_BASE_URL=https://your-provider.example/v1
-XPAW_MODEL_NAME=your-tool-capable-model
-XPAW_MODEL_API_KEY=your-secret-key
-```
-
-The API key stays in your ignored local `.env`. XPaw sends the current conversation, selected character prompt, and tool definitions to an external provider when this option is enabled. Do not use an external API until you understand that data boundary.
+External OpenAI-compatible providers are configured from the desktop settings page. API keys are encrypted by Electron safe storage and are never saved to `.env`, SQLite, a character card, or Git. Enabling a cloud model sends the character prompt, conversation, tool definitions, and relevant tool results to that provider.
 
 `XPAW_WORKSPACE` must point to a directory you deliberately authorize. XPaw rejects read, search, and write paths outside it.
 
@@ -94,7 +78,7 @@ Set-Location D:\XPaw
 npm run desktop
 ```
 
-The desktop application manages the local Ollama profile, conversation history, character settings, and token usage. Open the settings icon to adjust a model profile or add an OpenAI-compatible cloud provider. A cloud connection must pass a small test request before XPaw saves the profile. Enabling a cloud profile sends the character prompt, conversation, tool definitions, and relevant tool results to that provider.
+The desktop application manages model profiles, character settings, conversations, tasks, and token usage. A cloud connection must pass a small test request before XPaw saves the profile.
 
 ## Use XPaw
 
@@ -103,7 +87,17 @@ The desktop application manages the local Ollama profile, conversation history, 
 3. Ask an explicit task, such as `读取 notes.md 并用中文总结` or `在 workspace 中创建 todo.md，内容是...`.
 4. For every write request, read the displayed path and content preview. Enter `y` only when both are correct; press Enter or type anything else to deny it.
 
-XPaw v0.1 is a terminal application. It is ready for normal small-scale use within its defined scope: chat, workspace file listing/reading/searching, and confirmation-gated text-file writes. Its local 3B model is reliable enough for explicit file-tool requests; phrase file actions clearly rather than relying on broad requests such as "organize everything".
+XPaw is ready for normal small-scale use within its current scope: chat, roleplay, workspace file list/read/search, and confirmation-gated text-file writes. The local 3B model is best with explicit requests. Phrase file operations clearly rather than relying on broad requests such as "organize everything".
+
+## Task Runtime
+
+Each request is tracked as a local task. XPaw records a visible plan, tool activity, confirmation waits, failures, cancellation, and completion. Limits are deliberately conservative:
+
+- Maximum 12 tool calls per task.
+- Maximum 120 seconds per model request.
+- Maximum 60 seconds per tool call.
+- Maximum 5 minutes for a complete task.
+- Tasks interrupted by application shutdown are marked `interrupted`; the UI can safely rerun the original request but never guesses how to continue from an uncertain intermediate step.
 
 If a reboot stops the local model server, first launch the Ollama application, or run the following in a separate PowerShell window while the iKuuuVPN local proxy is available:
 
@@ -118,9 +112,10 @@ $env:HTTPS_PROXY = 'http://127.0.0.1:7890'
 - The model does not directly receive Node.js filesystem access.
 - Every tool argument is parsed before execution.
 - File paths are resolved and checked against the configured workspace.
-- `write_file` displays the requested content and requires `y` approval.
-- Delete operations, shell commands, network tools, plugins, and automatic memory are not part of v0.1.
-- API keys belong in `.env` or a future OS credential store, never in character cards or Git.
+- `write_file` displays the requested content and requires explicit approval in the terminal or desktop dialog.
+- Delete operations, shell commands, network tools, plugins, and automatic memory are not implemented.
+- Cloud API keys are encrypted locally and never exported through profiles or character cards.
+- Roleplay is fictional conversation. It cannot claim to have changed real files or devices without a verified tool result.
 
 ## Project Layout
 

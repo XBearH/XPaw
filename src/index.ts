@@ -26,7 +26,7 @@ async function main(): Promise<void> {
   const readline = createInterface({ input, output });
   const conversationId = database.createConversation(character.id, "Terminal session");
   const agent = new Agent(
-    new OpenAiCompatibleClient(baseUrl, modelName, apiKey),
+    new OpenAiCompatibleClient(baseUrl, { modelId: modelName, temperature: 0.35, maxTokens: 384, toolsEnabled: true }, apiKey),
     database,
     new WorkspaceTools(workspacePath),
     async (question) => (await readline.question(`${question} [y/N] `)).trim().toLowerCase() === "y",

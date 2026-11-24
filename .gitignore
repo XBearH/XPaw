@@ -8,3 +8,4 @@ workspace/*
 docs/DEVELOPMENT_NOTES.md
 coverage/
 *.log
+OllamaSetup*.exe

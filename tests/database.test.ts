@@ -28,4 +28,22 @@ describe("XPawDatabase", () => {
       status: "cancelled",
     })).not.toThrow();
   });
+
+  it("persists model profiles and conversation lifecycle", () => {
+    database.upsertModelProfile({
+      id: "local", name: "Local", provider: "ollama", baseUrl: "http://127.0.0.1:11434/v1",
+      modelId: "qwen2.5:3b", temperature: 0.35, maxTokens: 384, toolsEnabled: true, local: true,
+    });
+    expect(database.listModelProfiles()).toMatchObject([{ id: "local", toolsEnabled: true, local: true }]);
+    const conversationId = database.createConversation("test-agent", "Original");
+    database.renameConversation(conversationId, "Renamed");
+    expect(database.listConversations()[0]).toMatchObject({ id: conversationId, title: "Renamed" });
+    database.deleteConversation(conversationId);
+    expect(database.listConversations()).toHaveLength(0);
+  });
+
+  it("persists a local character override", () => {
+    database.saveCharacterOverride({ characterId: "test-agent", name: "New Name", description: "Description", role: "Assistant", summary: "Summary", tone: "Clear" });
+    expect(database.getCharacterOverride("test-agent")).toMatchObject({ name: "New Name", tone: "Clear" });
+  });
 });

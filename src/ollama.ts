@@ -1,4 +1,4 @@
-import type { ChatMessage, ModelClient, ModelResponse, ModelStreamEvent, ToolCall, ToolDefinition } from "./types.js";
+import type { ChatMessage, ModelClient, ModelProfile, ModelResponse, ModelStreamEvent, ToolCall, ToolDefinition } from "./types.js";
 
 interface OpenAiResponse {
   choices?: Array<{
@@ -14,7 +14,7 @@ interface OpenAiResponse {
 export class OpenAiCompatibleClient implements ModelClient {
   constructor(
     private readonly baseUrl: string,
-    private readonly model: string,
+    private readonly profile: Pick<ModelProfile, "modelId" | "temperature" | "maxTokens" | "toolsEnabled">,
     private readonly apiKey?: string,
   ) {}
 
@@ -26,17 +26,16 @@ export class OpenAiCompatibleClient implements ModelClient {
         ...(this.apiKey ? { authorization: `Bearer ${this.apiKey}` } : {}),
       },
       body: JSON.stringify({
-        model: this.model,
+        model: this.profile.modelId,
         messages: messages.map((message) => ({
           role: message.role,
           content: message.content,
           ...(message.toolCallId ? { tool_call_id: message.toolCallId } : {}),
           ...(message.toolCalls ? { tool_calls: message.toolCalls } : {}),
         })),
-        tools,
-        tool_choice: "auto",
-        max_tokens: 384,
-        temperature: 0.35,
+        ...(this.profile.toolsEnabled ? { tools, tool_choice: "auto" } : {}),
+        max_tokens: this.profile.maxTokens,
+        temperature: this.profile.temperature,
         stream: false,
       }),
       signal: AbortSignal.timeout(120_000),
@@ -64,17 +63,16 @@ export class OpenAiCompatibleClient implements ModelClient {
         ...(this.apiKey ? { authorization: `Bearer ${this.apiKey}` } : {}),
       },
       body: JSON.stringify({
-        model: this.model,
+        model: this.profile.modelId,
         messages: messages.map((message) => ({
           role: message.role,
           content: message.content,
           ...(message.toolCallId ? { tool_call_id: message.toolCallId } : {}),
           ...(message.toolCalls ? { tool_calls: message.toolCalls } : {}),
         })),
-        tools,
-        tool_choice: "auto",
-        max_tokens: 384,
-        temperature: 0.35,
+        ...(this.profile.toolsEnabled ? { tools, tool_choice: "auto" } : {}),
+        max_tokens: this.profile.maxTokens,
+        temperature: this.profile.temperature,
         stream: true,
         stream_options: { include_usage: true },
       }),

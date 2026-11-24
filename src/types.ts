@@ -58,3 +58,17 @@ export interface ToolResult {
   content: string;
   summary: string;
 }
+
+export interface ModelProfile {
+  id: string;
+  name: string;
+  provider: "ollama" | "openai-compatible";
+  baseUrl: string;
+  modelId: string;
+  temperature: number;
+  maxTokens: number;
+  toolsEnabled: boolean;
+  local: boolean;
+  createdAt: string;
+  updatedAt: string;
+}

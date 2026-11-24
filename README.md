@@ -11,6 +11,16 @@ XPaw is a local-first terminal AI character agent. Version `0.1.0` is intentiona
 - Write files only after explicit terminal confirmation.
 - Path traversal protection and a hard limit of 12 tool calls per request.
 
+## v0.2 desktop capabilities
+
+- Electron + React desktop workspace with streamed local model responses and a stop button.
+- Model profiles for local Ollama and OpenAI-compatible cloud endpoints.
+- Local model parameters: temperature, maximum output tokens, and tool-calling toggle.
+- Cloud API keys encrypted through Electron safe storage; keys are not stored in SQLite, character cards, or Git.
+- Persistent conversations with create, restore, rename, and delete actions.
+- Local character overrides for name, description, role, summary, and tone.
+- Token usage summary and daily heatmap, filterable by model and date range.
+
 ## Requirements
 
 - Node.js 22 or later.
@@ -71,9 +81,20 @@ npm run dev       # start terminal XPaw
 npm run build     # type-check and compile TypeScript
 npm test          # run safety and character-card tests
 npm run lint      # run TypeScript type checks without output
+npm run desktop   # launch the Electron desktop application
+npm run desktop:build # build the Electron main process, preload, and React renderer
 ```
 
 Type `/exit` to end a chat session.
+
+## Desktop Use
+
+```powershell
+Set-Location D:\XPaw
+npm run desktop
+```
+
+The desktop application manages the local Ollama profile, conversation history, character settings, and token usage. Open the settings icon to adjust a model profile or add an OpenAI-compatible cloud provider. A cloud connection must pass a small test request before XPaw saves the profile. Enabling a cloud profile sends the character prompt, conversation, tool definitions, and relevant tool results to that provider.
 
 ## Use XPaw
 

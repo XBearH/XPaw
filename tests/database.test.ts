@@ -56,4 +56,13 @@ describe("XPawDatabase", () => {
     expect(database.listTasks()[0]).toMatchObject({ id: taskId, status: "interrupted", plan: "Read the requested file." });
     expect(database.getTaskEvents(taskId)).toHaveLength(1);
   });
+
+  it("removes only the latest assistant answer for regeneration", () => {
+    const conversationId = database.createConversation("test-agent", "Regenerate");
+    database.saveMessage(conversationId, { role: "user", content: "Hello" });
+    database.saveMessage(conversationId, { role: "assistant", content: "First answer" });
+    database.deleteLatestAssistantMessage(conversationId);
+    expect(database.getLatestUserMessage(conversationId)).toBe("Hello");
+    expect(database.getMessages(conversationId)).toEqual([{ role: "user", content: "Hello" }]);
+  });
 });

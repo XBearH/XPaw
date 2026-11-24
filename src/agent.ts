@@ -3,6 +3,7 @@ import { toolDefinitions, WorkspaceTools } from "./tools.js";
 import type { AgentStreamEvent, ChatMessage, ModelClient, ToolCall, ToolResult } from "./types.js";
 
 export type Confirm = (question: string) => Promise<boolean>;
+const TOOL_TIMEOUT_MS = 60_000;
 
 export class Agent {
   constructor(
@@ -64,12 +65,12 @@ export class Agent {
     return content;
   }
 
-  async *streamRespond(conversationId: number, userInput: string, signal?: AbortSignal, taskId?: number): AsyncGenerator<AgentStreamEvent> {
-    this.database.saveMessage(conversationId, { role: "user", content: userInput });
+  async *streamRespond(conversationId: number, userInput: string, signal?: AbortSignal, taskId?: number, saveUser = true): AsyncGenerator<AgentStreamEvent> {
+    if (saveUser) this.database.saveMessage(conversationId, { role: "user", content: userInput });
     const messages: ChatMessage[] = [{ role: "system", content: this.systemPrompt }, ...this.database.getMessages(conversationId)];
     let finalContent = "";
     if (taskId) {
-      const plan = "理解请求 -> 按需调用受限工具 -> 返回可验证结果";
+      const plan = this.buildPlan(userInput);
       this.database.updateTask(taskId, "planning", { plan });
       this.database.addTaskEvent(taskId, "plan", plan);
       this.database.updateTask(taskId, "running");
@@ -153,10 +154,11 @@ export class Agent {
     }
 
     try {
-      const result = toolName === "list_files" ? await this.tools.listFiles(args)
-        : toolName === "read_file" ? await this.tools.readFile(args)
-          : toolName === "search_files" ? await this.tools.searchFiles(args)
-            : await this.tools.writeFile(args);
+      const operation = toolName === "list_files" ? this.tools.listFiles(args)
+        : toolName === "read_file" ? this.tools.readFile(args)
+          : toolName === "search_files" ? this.tools.searchFiles(args)
+            : this.tools.writeFile(args);
+      const result = await this.withTimeout(operation, `${toolName} exceeded the 60 second tool timeout.`);
       this.database.auditToolRun({
         conversationId, toolName, argumentsJson: JSON.stringify(args), authorizationState, status: "completed", resultSummary: result.summary,
       });
@@ -185,5 +187,26 @@ export class Agent {
       conversationId, toolName: call.function.name, argumentsJson: JSON.stringify(args), authorizationState, status: "failed", error,
     });
     return { content: `Tool failed: ${error}`, summary: `Failed: ${error}` };
+  }
+
+  private buildPlan(objective: string): string {
+    const text = objective.toLowerCase();
+    const steps = ["理解请求和现有会话上下文"];
+    if (/读|读取|查看|总结|搜索|查找|文件|read|search|list/.test(text)) steps.push("在授权工作区内检查相关文件");
+    if (/写|创建|保存|更新|修改|write|create|save|update/.test(text)) steps.push("准备变更，并在写入前请求确认");
+    steps.push("返回可验证的结果、限制或失败原因");
+    return steps.map((step, index) => `${index + 1}. ${step}`).join("\n");
+  }
+
+  private async withTimeout<T>(operation: Promise<T>, message: string): Promise<T> {
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    try {
+      return await Promise.race([
+        operation,
+        new Promise<never>((_, reject) => { timer = setTimeout(() => reject(new Error(message)), TOOL_TIMEOUT_MS); }),
+      ]);
+    } finally {
+      if (timer) clearTimeout(timer);
+    }
   }
 }

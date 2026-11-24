@@ -2,6 +2,7 @@ import { contextBridge, ipcRenderer } from "electron";
 
 contextBridge.exposeInMainWorld("xpaw", {
   startStream: (requestId: string, message: string) => ipcRenderer.invoke("xpaw:start-stream", { requestId, message }),
+  regenerate: (requestId: string) => ipcRenderer.invoke("xpaw:regenerate", requestId),
   cancelStream: (requestId: string) => ipcRenderer.invoke("xpaw:cancel-stream", requestId),
   newConversation: () => ipcRenderer.invoke("xpaw:new-conversation"),
   listConversations: () => ipcRenderer.invoke("xpaw:list-conversations"),

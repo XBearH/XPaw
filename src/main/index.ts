@@ -27,6 +27,30 @@ let character: CharacterCard;
 const vault = new SecretVault(join(root, "data", "secrets.json"));
 const activeRequests = new Map<string, AbortController>();
 
+function startTaskStream(sender: { send(channel: string, ...args: unknown[]): void }, input: { requestId: string; message: string }, saveUser = true): void {
+  if (activeRequests.has(input.requestId)) throw new Error("This request is already active.");
+  const controller = new AbortController();
+  activeRequests.set(input.requestId, controller);
+  const taskId = database.createTask(conversationId, input.message);
+  let timedOut = false;
+  const timeout = setTimeout(() => { timedOut = true; controller.abort(); }, 5 * 60_000);
+  void (async () => {
+    try {
+      sender.send("xpaw:stream-event", { requestId: input.requestId, type: "task", taskId });
+      for await (const streamEvent of agent.streamRespond(conversationId, input.message, controller.signal, taskId, saveUser)) {
+        sender.send("xpaw:stream-event", { requestId: input.requestId, taskId, ...streamEvent });
+      }
+    } finally {
+      clearTimeout(timeout);
+      if (timedOut) {
+        database.updateTask(taskId, "failed", { error: "任务超过 5 分钟总时限。" });
+        database.addTaskEvent(taskId, "timeout", "任务超过 5 分钟总时限，已停止。");
+      }
+      activeRequests.delete(input.requestId);
+    }
+  })();
+}
+
 async function bootstrapRuntime(): Promise<void> {
   await mkdir(workspacePath, { recursive: true });
   character = await loadCharacterCard(join(root, "characters", "default.yaml"));
@@ -106,28 +130,15 @@ app.whenReady().then(async () => {
   database.markRunningTasksInterrupted();
   ipcMain.handle("xpaw:start-stream", async (event, input: { requestId: string; message: string }) => {
     if (!input?.requestId || !input.message?.trim()) throw new Error("A request ID and message are required.");
-    if (activeRequests.has(input.requestId)) throw new Error("This request is already active.");
-    const controller = new AbortController();
-    activeRequests.set(input.requestId, controller);
-    const taskId = database.createTask(conversationId, input.message);
-    let timedOut = false;
-    const timeout = setTimeout(() => { timedOut = true; controller.abort(); }, 5 * 60_000);
-    void (async () => {
-      try {
-        event.sender.send("xpaw:stream-event", { requestId: input.requestId, type: "task", taskId });
-        for await (const streamEvent of agent.streamRespond(conversationId, input.message, controller.signal, taskId)) {
-          event.sender.send("xpaw:stream-event", { requestId: input.requestId, taskId, ...streamEvent });
-        }
-      } finally {
-        clearTimeout(timeout);
-        if (timedOut) {
-          database.updateTask(taskId, "failed", { error: "任务超过 5 分钟总时限。" });
-          database.addTaskEvent(taskId, "timeout", "任务超过 5 分钟总时限，已停止。");
-        }
-        activeRequests.delete(input.requestId);
-      }
-    })();
+    startTaskStream(event.sender, input);
     return { started: true };
+  });
+  ipcMain.handle("xpaw:regenerate", (event, requestId: string) => {
+    const userMessage = database.getLatestUserMessage(conversationId);
+    if (!userMessage) throw new Error("没有可重新生成的上一条用户消息。");
+    database.deleteLatestAssistantMessage(conversationId);
+    startTaskStream(event.sender, { requestId, message: userMessage }, false);
+    return { started: true, message: userMessage };
   });
   ipcMain.handle("xpaw:cancel-stream", (_event, requestId: string) => activeRequests.get(requestId)?.abort());
   ipcMain.handle("xpaw:new-conversation", async () => {

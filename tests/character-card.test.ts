@@ -25,5 +25,6 @@ describe("compileSystemPrompt", () => {
     expect(prompt).toContain("Writing files requires explicit confirmation");
     expect(prompt).toContain("call the relevant file tool before answering");
     expect(prompt).toContain("Only call write_file when the user explicitly asks");
+    expect(prompt).toContain("You may engage in ordinary conversation and consensual fictional roleplay");
   });
 });

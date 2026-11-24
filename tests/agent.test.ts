@@ -25,6 +25,8 @@ describe("Agent", () => {
       getMessages: () => [],
       auditToolRun: () => undefined,
       recordModelRun: () => undefined,
+      updateTask: () => undefined,
+      addTaskEvent: () => undefined,
     } as unknown as XPawDatabase;
     const tools = {
       readFile: async () => ({ content: "hello", summary: "Read note.txt." }),
@@ -34,5 +36,20 @@ describe("Agent", () => {
     await expect(agent.respond(1, "Read the note.")).resolves.toBe("The note says hello.");
     expect(requests).toHaveLength(2);
     expect(savedMessages).toContainEqual({ role: "assistant", content: "The note says hello." });
+  });
+
+  it("creates a task-specific plan before streaming a task", async () => {
+    const events: unknown[] = [];
+    const model = {
+      streamChat: async function* () { yield { type: "completed" as const, response: { content: "Done.", toolCalls: [] } }; },
+    } as unknown as OllamaClient;
+    const database = {
+      saveMessage: () => undefined, getMessages: () => [], auditToolRun: () => undefined, recordModelRun: () => undefined,
+      updateTask: () => undefined, addTaskEvent: (_taskId: number, type: string, message: string) => events.push({ type, message }),
+    } as unknown as XPawDatabase;
+    const agent = new Agent(model, database, {} as WorkspaceTools, async () => false, "system prompt");
+
+    for await (const _event of agent.streamRespond(1, "读取 notes.md 并总结", undefined, 7)) { /* consume */ }
+    expect(events).toContainEqual(expect.objectContaining({ type: "plan", message: expect.stringContaining("检查相关文件") }));
   });
 });

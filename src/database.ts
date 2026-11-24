@@ -183,6 +183,15 @@ export class XPawDatabase {
     `).all(conversationId, limit) as ChatMessage[];
   }
 
+  deleteLatestAssistantMessage(conversationId: number): void {
+    this.db.prepare("DELETE FROM messages WHERE id = (SELECT id FROM messages WHERE conversation_id = ? AND role = 'assistant' ORDER BY id DESC LIMIT 1)").run(conversationId);
+  }
+
+  getLatestUserMessage(conversationId: number): string | undefined {
+    const row = this.db.prepare("SELECT content FROM messages WHERE conversation_id = ? AND role = 'user' ORDER BY id DESC LIMIT 1").get(conversationId) as { content: string } | undefined;
+    return row?.content;
+  }
+
   auditToolRun(input: {
     conversationId: number;
     toolName: string;

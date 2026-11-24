@@ -30,6 +30,7 @@ export class OllamaClient {
         })),
         tools,
         tool_choice: "auto",
+        max_tokens: 512,
         stream: false,
       }),
       signal: AbortSignal.timeout(120_000),

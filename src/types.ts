@@ -94,3 +94,19 @@ export interface TaskEvent {
   data: string | null;
   createdAt: string;
 }
+
+export interface MemoryItem {
+  id: number;
+  category: "preference" | "fact" | "instruction" | "summary";
+  content: string;
+  source: string;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface UserProfile {
+  preferredName: string;
+  language: string;
+  timezone: string;
+  communicationStyle: string;
+}

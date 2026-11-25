@@ -1,7 +1,7 @@
 import Database from "better-sqlite3";
 import { mkdirSync } from "node:fs";
 import { dirname } from "node:path";
-import type { ChatMessage, ModelProfile, TaskEvent, TaskStatus, TaskSummary } from "./types.js";
+import type { ChatMessage, MemoryItem, ModelProfile, TaskEvent, TaskStatus, TaskSummary, UserProfile } from "./types.js";
 
 export class XPawDatabase {
   private readonly db: Database.Database;
@@ -92,6 +92,39 @@ export class XPawDatabase {
         data TEXT,
         created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
       );
+      CREATE TABLE IF NOT EXISTS memories (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        category TEXT NOT NULL,
+        content TEXT NOT NULL,
+        source TEXT NOT NULL,
+        created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+        updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+      );
+      CREATE VIRTUAL TABLE IF NOT EXISTS memories_fts USING fts5(content, content='memories', content_rowid='id');
+      CREATE TRIGGER IF NOT EXISTS memories_ai AFTER INSERT ON memories BEGIN
+        INSERT INTO memories_fts(rowid, content) VALUES (new.id, new.content);
+      END;
+      CREATE TRIGGER IF NOT EXISTS memories_ad AFTER DELETE ON memories BEGIN
+        INSERT INTO memories_fts(memories_fts, rowid, content) VALUES ('delete', old.id, old.content);
+      END;
+      CREATE TRIGGER IF NOT EXISTS memories_au AFTER UPDATE OF content ON memories BEGIN
+        INSERT INTO memories_fts(memories_fts, rowid, content) VALUES ('delete', old.id, old.content);
+        INSERT INTO memories_fts(rowid, content) VALUES (new.id, new.content);
+      END;
+      CREATE TABLE IF NOT EXISTS user_profile (
+        id INTEGER PRIMARY KEY CHECK (id = 1),
+        preferred_name TEXT NOT NULL DEFAULT '',
+        language TEXT NOT NULL DEFAULT 'zh-CN',
+        timezone TEXT NOT NULL DEFAULT 'Asia/Shanghai',
+        communication_style TEXT NOT NULL DEFAULT '',
+        updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+      );
+      CREATE TABLE IF NOT EXISTS conversation_summaries (
+        conversation_id INTEGER PRIMARY KEY REFERENCES conversations(id),
+        content TEXT NOT NULL,
+        source_message_count INTEGER NOT NULL,
+        updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+      );
     `);
   }
 
@@ -170,6 +203,43 @@ export class XPawDatabase {
     return this.db.prepare("SELECT id, task_id AS taskId, type, message, data, created_at AS createdAt FROM task_events WHERE task_id = ? ORDER BY id ASC").all(taskId) as TaskEvent[];
   }
 
+  getUserProfile(): UserProfile {
+    const row = this.db.prepare("SELECT preferred_name AS preferredName, language, timezone, communication_style AS communicationStyle FROM user_profile WHERE id = 1").get() as UserProfile | undefined;
+    return row ?? { preferredName: "", language: "zh-CN", timezone: "Asia/Shanghai", communicationStyle: "" };
+  }
+
+  saveUserProfile(profile: UserProfile): void {
+    this.db.prepare(`INSERT INTO user_profile (id, preferred_name, language, timezone, communication_style) VALUES (1, @preferredName, @language, @timezone, @communicationStyle)
+      ON CONFLICT(id) DO UPDATE SET preferred_name = excluded.preferred_name, language = excluded.language, timezone = excluded.timezone, communication_style = excluded.communication_style, updated_at = CURRENT_TIMESTAMP`).run(profile);
+  }
+
+  listMemories(): MemoryItem[] {
+    return this.db.prepare("SELECT id, category, content, source, created_at AS createdAt, updated_at AS updatedAt FROM memories ORDER BY updated_at DESC").all() as MemoryItem[];
+  }
+
+  addMemory(input: Omit<MemoryItem, "id" | "createdAt" | "updatedAt">): number {
+    const result = this.db.prepare("INSERT INTO memories (category, content, source) VALUES (?, ?, ?)").run(input.category, input.content, input.source);
+    return Number(result.lastInsertRowid);
+  }
+
+  updateMemory(id: number, input: Pick<MemoryItem, "category" | "content">): void {
+    this.db.prepare("UPDATE memories SET category = ?, content = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?").run(input.category, input.content, id);
+  }
+
+  deleteMemory(id: number): void {
+    this.db.prepare("DELETE FROM memories WHERE id = ?").run(id);
+  }
+
+  searchMemories(query: string, limit = 5): MemoryItem[] {
+    if (/\p{Script=Han}/u.test(query)) {
+      return this.db.prepare("SELECT id, category, content, source, created_at AS createdAt, updated_at AS updatedAt FROM memories WHERE content LIKE ? ORDER BY updated_at DESC LIMIT ?").all(`%${query.trim()}%`, limit) as MemoryItem[];
+    }
+    const tokens = query.match(/[\p{L}\p{N}_]+/gu)?.slice(0, 8) ?? [];
+    if (tokens.length === 0) return [];
+    const expression = tokens.map((token) => `"${token.replaceAll('"', '""')}"`).join(" OR ");
+    return this.db.prepare(`SELECT m.id, m.category, m.content, m.source, m.created_at AS createdAt, m.updated_at AS updatedAt FROM memories_fts f JOIN memories m ON m.id = f.rowid WHERE memories_fts MATCH ? ORDER BY bm25(memories_fts) LIMIT ?`).all(expression, limit) as MemoryItem[];
+  }
+
   saveMessage(conversationId: number, message: ChatMessage): void {
     this.db.prepare("INSERT INTO messages (conversation_id, role, content) VALUES (?, ?, ?)").run(conversationId, message.role, message.content);
     this.db.prepare("UPDATE conversations SET updated_at = CURRENT_TIMESTAMP WHERE id = ?").run(conversationId);
@@ -190,6 +260,19 @@ export class XPawDatabase {
   getLatestUserMessage(conversationId: number): string | undefined {
     const row = this.db.prepare("SELECT content FROM messages WHERE conversation_id = ? AND role = 'user' ORDER BY id DESC LIMIT 1").get(conversationId) as { content: string } | undefined;
     return row?.content;
+  }
+
+  getConversationSummary(conversationId: number): { content: string; sourceMessageCount: number; updatedAt: string } | undefined {
+    return this.db.prepare("SELECT content, source_message_count AS sourceMessageCount, updated_at AS updatedAt FROM conversation_summaries WHERE conversation_id = ?").get(conversationId) as { content: string; sourceMessageCount: number; updatedAt: string } | undefined;
+  }
+
+  saveConversationSummary(conversationId: number, content: string, sourceMessageCount: number): void {
+    this.db.prepare(`INSERT INTO conversation_summaries (conversation_id, content, source_message_count) VALUES (?, ?, ?)
+      ON CONFLICT(conversation_id) DO UPDATE SET content = excluded.content, source_message_count = excluded.source_message_count, updated_at = CURRENT_TIMESTAMP`).run(conversationId, content, sourceMessageCount);
+  }
+
+  deleteConversationSummary(conversationId: number): void {
+    this.db.prepare("DELETE FROM conversation_summaries WHERE conversation_id = ?").run(conversationId);
   }
 
   auditToolRun(input: {

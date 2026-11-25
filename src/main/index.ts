@@ -8,7 +8,7 @@ import { compileSystemPrompt, loadCharacterCard, type CharacterCard } from "../c
 import { XPawDatabase } from "../database.js";
 import { OpenAiCompatibleClient } from "../ollama.js";
 import { WorkspaceTools } from "../tools.js";
-import type { ModelProfile } from "../types.js";
+import type { MemoryItem, ModelProfile, UserProfile } from "../types.js";
 import { SecretVault } from "./secret-vault.js";
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), "../..");
@@ -37,7 +37,8 @@ function startTaskStream(sender: { send(channel: string, ...args: unknown[]): vo
   void (async () => {
     try {
       sender.send("xpaw:stream-event", { requestId: input.requestId, type: "task", taskId });
-      for await (const streamEvent of agent.streamRespond(conversationId, input.message, controller.signal, taskId, saveUser)) {
+      const requestAgent = createAgentForRequest(input.message);
+      for await (const streamEvent of requestAgent.streamRespond(conversationId, input.message, controller.signal, taskId, saveUser)) {
         sender.send("xpaw:stream-event", { requestId: input.requestId, taskId, ...streamEvent });
       }
     } finally {
@@ -93,7 +94,20 @@ function createAgent(character: Awaited<ReturnType<typeof loadCharacterCard>>): 
       });
       return result.response === 0;
     },
-    compileSystemPrompt(character, workspacePath),
+    compileSystemPrompt(character, workspacePath, database.getUserProfile()),
+    { provider: activeProfile.provider, modelId: activeProfile.modelId },
+  );
+}
+
+function createAgentForRequest(userInput: string): Agent {
+  const profile = database.getUserProfile();
+  const memories = database.searchMemories(userInput);
+  return new Agent(
+    new OpenAiCompatibleClient(activeProfile.baseUrl, activeProfile, activeProfile.id === "local-ollama-default" ? apiKey : vault.get(activeProfile.id)),
+    database,
+    new WorkspaceTools(workspacePath),
+    async (question) => (await dialog.showMessageBox({ type: "warning", title: "Confirm file write", message: "XPaw requests permission to write a file.", detail: question, buttons: ["Approve", "Deny"], defaultId: 1, cancelId: 1 })).response === 0,
+    compileSystemPrompt(character, workspacePath, profile, memories),
     { provider: activeProfile.provider, modelId: activeProfile.modelId },
   );
 }
@@ -156,6 +170,13 @@ app.whenReady().then(async () => {
   ipcMain.handle("xpaw:delete-conversation", (_event, id: number) => database.deleteConversation(id));
   ipcMain.handle("xpaw:get-config", () => ({ provider: activeProfile.provider, modelId: activeProfile.modelId, workspacePath, local: activeProfile.local }));
   ipcMain.handle("xpaw:get-usage", (_event, filter?: { modelId?: string; days?: number }) => database.getUsageSummary(filter?.modelId, filter?.days));
+  ipcMain.handle("xpaw:get-memory", () => ({ profile: database.getUserProfile(), memories: database.listMemories() }));
+  ipcMain.handle("xpaw:save-user-profile", (_event, profile: UserProfile) => database.saveUserProfile(profile));
+  ipcMain.handle("xpaw:add-memory", (_event, memory: Omit<MemoryItem, "id" | "createdAt" | "updatedAt">) => database.addMemory(memory));
+  ipcMain.handle("xpaw:update-memory", (_event, id: number, memory: Pick<MemoryItem, "category" | "content">) => database.updateMemory(id, memory));
+  ipcMain.handle("xpaw:delete-memory", (_event, id: number) => database.deleteMemory(id));
+  ipcMain.handle("xpaw:get-conversation-summary", (_event, id: number) => database.getConversationSummary(id));
+  ipcMain.handle("xpaw:delete-conversation-summary", (_event, id: number) => database.deleteConversationSummary(id));
   ipcMain.handle("xpaw:list-tasks", () => database.listTasks());
   ipcMain.handle("xpaw:get-task-events", (_event, taskId: number) => database.getTaskEvents(taskId));
   ipcMain.handle("xpaw:rerun-task", async (_event, taskId: number) => {

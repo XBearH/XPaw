@@ -65,4 +65,16 @@ describe("XPawDatabase", () => {
     expect(database.getLatestUserMessage(conversationId)).toBe("Hello");
     expect(database.getMessages(conversationId)).toEqual([{ role: "user", content: "Hello" }]);
   });
+
+  it("stores searchable user-approved memories and summaries", () => {
+    database.saveUserProfile({ preferredName: "小熊", language: "zh-CN", timezone: "Asia/Shanghai", communicationStyle: "简洁" });
+    expect(database.getUserProfile()).toMatchObject({ preferredName: "小熊", communicationStyle: "简洁" });
+    const memoryId = database.addMemory({ category: "preference", content: "用户偏好中文回答", source: "user" });
+    expect(database.searchMemories("中文回答")).toMatchObject([{ id: memoryId }]);
+    const conversationId = database.createConversation("test-agent", "Summary");
+    database.saveConversationSummary(conversationId, "用户偏好中文。", 20);
+    expect(database.getConversationSummary(conversationId)).toMatchObject({ content: "用户偏好中文。", sourceMessageCount: 20 });
+    database.deleteMemory(memoryId);
+    expect(database.searchMemories("中文回答")).toHaveLength(0);
+  });
 });

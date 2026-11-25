@@ -13,6 +13,7 @@ XPaw is a local-first desktop AI character and task agent. It supports ordinary 
 - Token usage summary and daily heatmap, filterable by model and date range.
 - Persistent agent tasks with plans, confirmations, tool events, cancellation, time limits, audit history, and safe rerun.
 - Workspace-scoped file list, read, search, and confirmation-gated text-file write tools.
+- User profile, explicit long-term memories, local memory search, and manageable conversation summaries.
 
 ## Requirements
 
@@ -98,6 +99,16 @@ Each request is tracked as a local task. XPaw records a visible plan, tool activ
 - Maximum 60 seconds per tool call.
 - Maximum 5 minutes for a complete task.
 - Tasks interrupted by application shutdown are marked `interrupted`; the UI can safely rerun the original request but never guesses how to continue from an uncertain intermediate step.
+
+## Memory
+
+XPaw keeps memory controllable and local:
+
+- User profile fields such as preferred name, language, timezone, and communication style are explicit and editable.
+- Long-term memories are created, edited, and deleted by the user from the memory page.
+- Relevant memories are retrieved locally for a new request. XPaw injects at most five matching user-approved memories.
+- Passwords, verification codes, API keys, and access tokens must not be saved as memories.
+- Long conversations are summarized after a conservative threshold. The summary is visible and can be deleted from the memory page.
 
 If a reboot stops the local model server, first launch the Ollama application, or run the following in a separate PowerShell window while the iKuuuVPN local proxy is available:
 

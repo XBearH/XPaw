@@ -2,7 +2,7 @@ import "dotenv/config";
 import { app, BrowserWindow, dialog, ipcMain } from "electron";
 import { fileURLToPath } from "node:url";
 import { basename, dirname, extname, join, resolve } from "node:path";
-import { mkdir, readFile, stat } from "node:fs/promises";
+import { mkdir, readFile, stat, writeFile } from "node:fs/promises";
 import { spawn, type ChildProcess } from "node:child_process";
 import { createHash } from "node:crypto";
 import { Agent } from "../agent.js";
@@ -10,7 +10,7 @@ import { compileSystemPrompt, loadCharacterCard, type CharacterCard } from "../c
 import { XPawDatabase } from "../database.js";
 import { OpenAiCompatibleClient } from "../ollama.js";
 import { WorkspaceTools } from "../tools.js";
-import type { CompanionState, InteractionMode, McpServerProfile, McpToolInfo, MemoryItem, ModelProfile, PluginProfile, PluginToolInfo, UserProfile } from "../types.js";
+import type { CompanionState, InteractionMode, McpServerProfile, McpToolInfo, MemoryItem, ModelCapabilities, ModelProfile, PluginProfile, PluginToolInfo, UserProfile } from "../types.js";
 import { SecretVault } from "./secret-vault.js";
 import { McpClientManager } from "./mcp-client.js";
 import { PluginHost } from "./plugin-host.js";
@@ -159,6 +159,15 @@ function createAgentForRequest(userInput: string): Agent {
   );
 }
 
+function applyModeProfile(mode: InteractionMode): void {
+  const configuredId = database.getModeProfileId(mode);
+  const profile = configuredId ? database.listModelProfiles().find((item) => item.id === configuredId) : undefined;
+  if (profile) {
+    activeProfile = profile;
+    modelId = profile.modelId;
+  }
+}
+
 async function executeExternalTool(name: string, args: Record<string, unknown>): Promise<{ content: string; summary: string }> {
   if (name.startsWith("mcp_")) return executeMcpTool(name, args);
   const resolved = plugins.resolveTool(name);
@@ -273,13 +282,20 @@ app.whenReady().then(async () => {
   });
   ipcMain.handle("xpaw:rename-conversation", (_event, id: number, title: string) => database.renameConversation(id, title.trim().slice(0, 80) || "未命名对话"));
   ipcMain.handle("xpaw:delete-conversation", (_event, id: number) => database.deleteConversation(id));
+  ipcMain.handle("xpaw:set-conversation-pinned", (_event, id: number, pinned: boolean) => database.setConversationPinned(id, pinned));
   ipcMain.handle("xpaw:get-config", () => ({ provider: activeProfile.provider, modelId: activeProfile.modelId, workspacePath, local: activeProfile.local }));
+  ipcMain.handle("xpaw:export-data", async (_event, targetPath: string) => {
+    if (!targetPath.toLowerCase().endsWith(".json")) throw new Error("导出文件必须使用 .json 扩展名。");
+    await writeFile(targetPath, JSON.stringify(database.exportPortableData(), null, 2), "utf8");
+  });
+  ipcMain.handle("xpaw:get-mode-profiles", () => ({ conversation: database.getModeProfileId("conversation"), roleplay: database.getModeProfileId("roleplay"), task: database.getModeProfileId("task") }));
+  ipcMain.handle("xpaw:set-mode-profile", (_event, mode: InteractionMode, profileId: string) => database.setModeProfileId(mode, profileId));
   ipcMain.handle("xpaw:get-ollama-status", async () => ({ available: await isOllamaAvailable(), autostart: database.getSetting("ollama_autostart") !== "false" }));
   ipcMain.handle("xpaw:set-ollama-autostart", (_event, enabled: boolean) => database.setSetting("ollama_autostart", enabled ? "true" : "false"));
   ipcMain.handle("xpaw:start-ollama", async () => ({ available: await ensureOllamaRunning(), autostart: database.getSetting("ollama_autostart") !== "false" }));
   ipcMain.handle("xpaw:get-companion-state", () => database.getCompanionState(character.id));
   ipcMain.handle("xpaw:save-companion-state", (_event, state: Omit<CompanionState, "updatedAt">) => database.saveCompanionState(character.id, state));
-  ipcMain.handle("xpaw:set-interaction-mode", (_event, mode: InteractionMode) => { interactionMode = mode; });
+  ipcMain.handle("xpaw:set-interaction-mode", (_event, mode: InteractionMode) => { interactionMode = mode; applyModeProfile(mode); agent = createAgent(character); });
   ipcMain.handle("xpaw:list-scene-checkpoints", () => database.listSceneCheckpoints(character.id));
   ipcMain.handle("xpaw:add-scene-checkpoint", (_event, title: string, summary: string) => database.addSceneCheckpoint(character.id, title, summary));
   ipcMain.handle("xpaw:delete-scene-checkpoint", (_event, id: number) => database.deleteSceneCheckpoint(id));
@@ -333,6 +349,8 @@ app.whenReady().then(async () => {
   });
   ipcMain.handle("xpaw:list-models", () => listLocalModels());
   ipcMain.handle("xpaw:list-profiles", () => database.listModelProfiles());
+  ipcMain.handle("xpaw:get-model-capabilities", (_event, profileId: string) => database.getModelCapabilities(profileId));
+  ipcMain.handle("xpaw:save-model-capabilities", (_event, profileId: string, capabilities: ModelCapabilities) => database.saveModelCapabilities(profileId, capabilities));
   ipcMain.handle("xpaw:save-profile", async (_event, input: { profile: Omit<ModelProfile, "createdAt" | "updatedAt">; apiKey?: string }) => {
     const { profile } = input;
     if (!profile?.id || !profile.name || !profile.baseUrl || !profile.modelId) throw new Error("模型档案字段不完整。");

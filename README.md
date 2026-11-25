@@ -18,6 +18,8 @@ XPaw is a local-first desktop AI character and task agent. It supports ordinary 
 - Controlled MCP client for local stdio tool servers with per-tool authorization.
 - Local Plugin SDK with manifest validation, isolated Node processes, JSON Lines RPC, and per-tool authorization.
 - Appearance preferences: light, dark, system-following modes, and a local custom accent color.
+- v0.9 model capability metadata and mode-specific model defaults.
+- Portable JSON data export that excludes API keys, secrets, plugin/MCP permissions, and workspace files.
 - Companion layer with editable relationship, boundaries, fictional scene state, and scene checkpoints.
 - Optional automatic startup of the local Ollama service from the desktop app.
 
@@ -165,6 +167,12 @@ The visual direction is intentionally XPaw-specific: a restrained companion-focu
 ## Appearance
 
 Open desktop settings to choose light mode, dark mode, or follow-system mode. You can also select a custom accent color. Appearance settings are stored locally in the desktop application's browser storage and do not affect character cards or shared project data.
+
+## v0.9 Model And Data Controls
+
+Model profiles can carry capability metadata such as thinking support, tool support, roleplay suitability, and context window size. XPaw also stores separate default profiles for conversation, roleplay, and task modes. These settings are used to make model suitability visible; they do not make a small model smarter by themselves.
+
+The desktop runtime provides a portable JSON export for conversations, tasks, memories, knowledge indexes, character overrides, companion state, scene checkpoints, and non-secret model settings. API keys, encrypted secret storage, plugin/MCP permissions, and workspace files are deliberately excluded.
 
 ## Companion Layer
 

@@ -104,4 +104,12 @@ describe("XPawDatabase", () => {
     database.deleteSceneCheckpoint(checkpointId);
     expect(database.listSceneCheckpoints("test-agent")).toHaveLength(0);
   });
+
+  it("persists model capabilities and mode defaults", () => {
+    database.upsertModelProfile({ id: "profile", name: "Profile", provider: "ollama", baseUrl: "http://127.0.0.1:11434/v1", modelId: "qwen2.5:3b", temperature: 0.3, maxTokens: 384, toolsEnabled: true, local: true });
+    database.saveModelCapabilities("profile", { thinking: false, tools: true, roleplay: "suitable", contextWindow: 32768 });
+    database.setModeProfileId("roleplay", "profile");
+    expect(database.getModelCapabilities("profile")).toMatchObject({ roleplay: "suitable", contextWindow: 32768 });
+    expect(database.getModeProfileId("roleplay")).toBe("profile");
+  });
 });

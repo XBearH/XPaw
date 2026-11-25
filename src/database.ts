@@ -1,7 +1,7 @@
 import Database from "better-sqlite3";
 import { mkdirSync } from "node:fs";
 import { dirname } from "node:path";
-import type { ChatMessage, CompanionState, KnowledgeChunk, KnowledgeDocument, McpServerProfile, McpToolInfo, MemoryItem, ModelProfile, PluginProfile, PluginToolInfo, SceneCheckpoint, TaskEvent, TaskStatus, TaskSummary, UserProfile } from "./types.js";
+import type { ChatMessage, CompanionState, KnowledgeChunk, KnowledgeDocument, McpServerProfile, McpToolInfo, MemoryItem, ModelCapabilities, ModelProfile, PluginProfile, PluginToolInfo, SceneCheckpoint, TaskEvent, TaskStatus, TaskSummary, UserProfile } from "./types.js";
 
 export class XPawDatabase {
   private readonly db: Database.Database;
@@ -64,6 +64,13 @@ export class XPawDatabase {
         local INTEGER NOT NULL,
         created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
         updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+      );
+      CREATE TABLE IF NOT EXISTS model_capabilities (
+        profile_id TEXT PRIMARY KEY REFERENCES model_profiles(id) ON DELETE CASCADE,
+        thinking INTEGER NOT NULL DEFAULT 0,
+        tools INTEGER NOT NULL DEFAULT 1,
+        roleplay TEXT NOT NULL DEFAULT 'experimental',
+        context_window INTEGER NOT NULL DEFAULT 4096
       );
       CREATE TABLE IF NOT EXISTS character_overrides (
         character_id TEXT PRIMARY KEY,
@@ -202,6 +209,12 @@ export class XPawDatabase {
         created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
       );
     `);
+    this.ensureColumn("conversations", "pinned", "INTEGER NOT NULL DEFAULT 0");
+  }
+
+  private ensureColumn(table: string, column: string, definition: string): void {
+    const columns = this.db.prepare(`PRAGMA table_info(${table})`).all() as Array<{ name: string }>;
+    if (!columns.some((item) => item.name === column)) this.db.exec(`ALTER TABLE ${table} ADD COLUMN ${column} ${definition}`);
   }
 
   createConversation(characterId: string, title: string): number {
@@ -209,12 +222,17 @@ export class XPawDatabase {
     return Number(result.lastInsertRowid);
   }
 
-  listConversations(): Array<{ id: number; characterId: string; title: string; updatedAt: string }> {
-    return this.db.prepare("SELECT id, character_id AS characterId, title, updated_at AS updatedAt FROM conversations ORDER BY updated_at DESC LIMIT 100").all() as Array<{ id: number; characterId: string; title: string; updatedAt: string }>;
+  listConversations(): Array<{ id: number; characterId: string; title: string; pinned: boolean; createdAt: string; updatedAt: string }> {
+    const rows = this.db.prepare("SELECT id, character_id AS characterId, title, pinned, created_at AS createdAt, updated_at AS updatedAt FROM conversations ORDER BY pinned DESC, updated_at DESC LIMIT 100").all() as Array<{ id: number; characterId: string; title: string; pinned: number; createdAt: string; updatedAt: string }>;
+    return rows.map((row) => ({ ...row, pinned: Boolean(row.pinned) }));
   }
 
   renameConversation(id: number, title: string): void {
     this.db.prepare("UPDATE conversations SET title = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?").run(title, id);
+  }
+
+  setConversationPinned(id: number, pinned: boolean): void {
+    this.db.prepare("UPDATE conversations SET pinned = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?").run(Number(pinned), id);
   }
 
   deleteConversation(id: number): void {
@@ -242,6 +260,16 @@ export class XPawDatabase {
 
   deleteModelProfile(id: string): void {
     this.db.prepare("DELETE FROM model_profiles WHERE id = ?").run(id);
+  }
+
+  getModelCapabilities(profileId: string): ModelCapabilities {
+    const row = this.db.prepare("SELECT thinking, tools, roleplay, context_window AS contextWindow FROM model_capabilities WHERE profile_id = ?").get(profileId) as { thinking: number; tools: number; roleplay: ModelCapabilities["roleplay"]; contextWindow: number } | undefined;
+    return row ? { thinking: Boolean(row.thinking), tools: Boolean(row.tools), roleplay: row.roleplay, contextWindow: row.contextWindow } : { thinking: false, tools: true, roleplay: "experimental", contextWindow: 4096 };
+  }
+
+  saveModelCapabilities(profileId: string, capabilities: ModelCapabilities): void {
+    this.db.prepare(`INSERT INTO model_capabilities (profile_id, thinking, tools, roleplay, context_window) VALUES (?, ?, ?, ?, ?)
+      ON CONFLICT(profile_id) DO UPDATE SET thinking = excluded.thinking, tools = excluded.tools, roleplay = excluded.roleplay, context_window = excluded.context_window`).run(profileId, Number(capabilities.thinking), Number(capabilities.tools), capabilities.roleplay, capabilities.contextWindow);
   }
 
   getCharacterOverride(characterId: string): { name: string; description: string; role: string; summary: string; tone: string } | undefined {
@@ -319,6 +347,13 @@ export class XPawDatabase {
   saveMessage(conversationId: number, message: ChatMessage): void {
     this.db.prepare("INSERT INTO messages (conversation_id, role, content) VALUES (?, ?, ?)").run(conversationId, message.role, message.content);
     this.db.prepare("UPDATE conversations SET updated_at = CURRENT_TIMESTAMP WHERE id = ?").run(conversationId);
+    if (message.role === "user") {
+      const conversation = this.db.prepare("SELECT title FROM conversations WHERE id = ?").get(conversationId) as { title: string } | undefined;
+      if (conversation && ["Desktop session", "Terminal session", "新对话", "当前对话"].includes(conversation.title)) {
+        const title = message.content.replace(/\s+/g, " ").trim().slice(0, 32) || "新对话";
+        this.db.prepare("UPDATE conversations SET title = ? WHERE id = ?").run(title, conversationId);
+      }
+    }
   }
 
   getMessages(conversationId: number, limit = 30): ChatMessage[] {
@@ -444,6 +479,27 @@ export class XPawDatabase {
 
   setSetting(key: string, value: string): void {
     this.db.prepare("INSERT INTO app_settings (key, value) VALUES (?, ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value").run(key, value);
+  }
+
+  getModeProfileId(mode: string): string | undefined {
+    return this.getSetting(`mode_profile_${mode}`);
+  }
+
+  setModeProfileId(mode: string, profileId: string): void {
+    this.setSetting(`mode_profile_${mode}`, profileId);
+  }
+
+  exportPortableData(): Record<string, unknown> {
+    const query = (table: string) => this.db.prepare(`SELECT * FROM ${table}`).all();
+    return {
+      schemaVersion: 1,
+      exportedAt: new Date().toISOString(),
+      conversations: query("conversations"), messages: query("messages"), tasks: query("tasks"), taskEvents: query("task_events"),
+      memories: query("memories"), userProfile: query("user_profile"), conversationSummaries: query("conversation_summaries"),
+      knowledgeDocuments: query("knowledge_documents"), knowledgeChunks: query("knowledge_chunks"), characterOverrides: query("character_overrides"),
+      companionState: query("companion_state"), sceneCheckpoints: query("scene_checkpoints"), modelProfiles: query("model_profiles"), modelCapabilities: query("model_capabilities"),
+      appSettings: this.db.prepare("SELECT key, value FROM app_settings WHERE key NOT LIKE 'mode_profile_%'").all(),
+    };
   }
 
   getCompanionState(characterId: string): CompanionState {

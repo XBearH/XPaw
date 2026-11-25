@@ -73,6 +73,13 @@ export interface ModelProfile {
   updatedAt: string;
 }
 
+export interface ModelCapabilities {
+  thinking: boolean;
+  tools: boolean;
+  roleplay: "experimental" | "suitable" | "recommended";
+  contextWindow: number;
+}
+
 export type TaskStatus = "queued" | "planning" | "awaiting_confirmation" | "running" | "completed" | "failed" | "cancelled" | "interrupted";
 
 export interface TaskSummary {

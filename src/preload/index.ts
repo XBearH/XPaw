@@ -9,12 +9,16 @@ contextBridge.exposeInMainWorld("xpaw", {
   selectConversation: (id: number) => ipcRenderer.invoke("xpaw:select-conversation", id),
   renameConversation: (id: number, title: string) => ipcRenderer.invoke("xpaw:rename-conversation", id, title),
   deleteConversation: (id: number) => ipcRenderer.invoke("xpaw:delete-conversation", id),
+  setConversationPinned: (id: number, pinned: boolean) => ipcRenderer.invoke("xpaw:set-conversation-pinned", id, pinned),
   onStreamEvent: (listener: (event: unknown) => void) => {
     const handler = (_event: Electron.IpcRendererEvent, payload: unknown) => listener(payload);
     ipcRenderer.on("xpaw:stream-event", handler);
     return () => ipcRenderer.removeListener("xpaw:stream-event", handler);
   },
   getConfig: () => ipcRenderer.invoke("xpaw:get-config"),
+  exportData: (targetPath: string) => ipcRenderer.invoke("xpaw:export-data", targetPath),
+  getModeProfiles: () => ipcRenderer.invoke("xpaw:get-mode-profiles"),
+  setModeProfile: (mode: string, profileId: string) => ipcRenderer.invoke("xpaw:set-mode-profile", mode, profileId),
   getOllamaStatus: () => ipcRenderer.invoke("xpaw:get-ollama-status"),
   setOllamaAutostart: (enabled: boolean) => ipcRenderer.invoke("xpaw:set-ollama-autostart", enabled),
   startOllama: () => ipcRenderer.invoke("xpaw:start-ollama"),
@@ -51,6 +55,8 @@ contextBridge.exposeInMainWorld("xpaw", {
   rerunTask: (taskId: number) => ipcRenderer.invoke("xpaw:rerun-task", taskId),
   listModels: () => ipcRenderer.invoke("xpaw:list-models"),
   listProfiles: () => ipcRenderer.invoke("xpaw:list-profiles"),
+  getModelCapabilities: (profileId: string) => ipcRenderer.invoke("xpaw:get-model-capabilities", profileId),
+  saveModelCapabilities: (profileId: string, capabilities: unknown) => ipcRenderer.invoke("xpaw:save-model-capabilities", profileId, capabilities),
   saveProfile: (input: unknown) => ipcRenderer.invoke("xpaw:save-profile", input),
   selectProfile: (id: string) => ipcRenderer.invoke("xpaw:select-profile", id),
   testProfile: (input: unknown) => ipcRenderer.invoke("xpaw:test-profile", input),

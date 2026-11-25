@@ -6,11 +6,11 @@ import { mkdir, readFile, stat, writeFile } from "node:fs/promises";
 import { spawn, type ChildProcess } from "node:child_process";
 import { createHash } from "node:crypto";
 import { Agent } from "../agent.js";
-import { compileSystemPrompt, loadCharacterCard, type CharacterCard } from "../character-card.js";
+import { compileSystemPrompt, loadCharacterCard, migrateCharacterCard, serializeCharacterCard, type CharacterCard } from "../character-card.js";
 import { XPawDatabase } from "../database.js";
 import { OpenAiCompatibleClient } from "../ollama.js";
 import { WorkspaceTools } from "../tools.js";
-import type { CompanionState, InteractionMode, McpServerProfile, McpToolInfo, MemoryItem, ModelCapabilities, ModelProfile, PluginProfile, PluginToolInfo, UserProfile } from "../types.js";
+import type { CompanionState, InteractionMode, McpServerProfile, McpToolInfo, MemoryItem, ModelCapabilities, ModelProfile, PluginProfile, PluginToolInfo, UserProfile, WorldBook } from "../types.js";
 import { SecretVault } from "./secret-vault.js";
 import { McpClientManager } from "./mcp-client.js";
 import { PluginHost } from "./plugin-host.js";
@@ -146,7 +146,9 @@ function createAgentForRequest(userInput: string): Agent {
   const mcpProfiles = database.listMcpServers();
   const companion = database.getCompanionState(character.id);
   const externalTools = interactionMode === "roleplay" ? [] : [...mcp.getAuthorizedToolDefinitions(mcpProfiles, (serverId, toolName) => database.getMcpToolAuthorization(serverId, toolName)), ...plugins.getToolDefinitions(database.listPlugins(), pluginTools)];
-  const companionContext = interactionMode === "roleplay" ? `\nRoleplay mode:\n- Relationship: ${companion.relationshipLabel}\n- Boundaries: ${companion.boundaries || "not set"}\n- Scene: ${companion.sceneTitle || "not set"}\n- Setting: ${companion.sceneSetting || "not set"}\n- Scene summary: ${companion.sceneSummary || "not set"}\n- Stay in fictional roleplay. Do not call real tools in this mode.\n` : interactionMode === "task" ? "\nTask mode: prioritize plans, explicit tool results, and concise status updates.\n" : "\nConversation mode: respond naturally; only use real tools for explicit real-world requests.\n";
+  const worldBook = interactionMode === "roleplay" && character.world_book_id ? database.listWorldBooks().find((book) => book.id === character.world_book_id) : undefined;
+  const worldContext = worldBook ? buildWorldContext(worldBook, userInput) : "";
+  const companionContext = interactionMode === "roleplay" ? `\nRoleplay mode:\n- Relationship: ${companion.relationshipLabel}\n- Boundaries: ${companion.boundaries || "not set"}\n- Scene: ${companion.sceneTitle || "not set"}\n- Setting: ${companion.sceneSetting || "not set"}\n- Scene summary: ${companion.sceneSummary || "not set"}\n${worldContext}- Stay in fictional roleplay. Do not call real tools in this mode.\n` : interactionMode === "task" ? "\nTask mode: respond in your character's voice while prioritizing plans, explicit tool results, and concise progress updates.\n" : "\nConversation mode: respond naturally; only use real tools for explicit real-world requests.\n";
   return new Agent(
     new OpenAiCompatibleClient(activeProfile.baseUrl, activeProfile, activeProfile.id === "local-ollama-default" ? apiKey : vault.get(activeProfile.id)),
     database,
@@ -157,6 +159,23 @@ function createAgentForRequest(userInput: string): Agent {
     externalTools,
     async (name, args) => executeExternalTool(name, args),
   );
+}
+
+function buildWorldContext(book: WorldBook, input: string): string {
+  const lowered = input.toLowerCase();
+  const entries = book.entries.filter((entry) => entry.keywords.length === 0 || entry.keywords.some((keyword) => lowered.includes(keyword.toLowerCase()))).sort((a, b) => b.priority - a.priority).slice(0, 5);
+  const text = entries.map((entry) => `- ${entry.title}: ${entry.content}`).join("\n");
+  return `- World: ${book.name}. ${book.description}\n${text ? `- Relevant world entries:\n${text}\n` : ""}`;
+}
+
+async function importCharacterCard(filePath: string): Promise<CharacterCard> {
+  const extension = extname(filePath).toLowerCase();
+  if (![".json", ".yaml", ".yml"].includes(extension)) throw new Error("角色卡只支持 JSON 或 YAML 文件。");
+  const raw = await readFile(filePath, "utf8");
+  const parsed = extension === ".json" ? JSON.parse(raw) : (await import("js-yaml")).default.load(raw);
+  const card = migrateCharacterCard(parsed);
+  database.upsertCharacterCard({ id: card.id, name: card.name, card: card as unknown as Record<string, unknown> });
+  return card;
 }
 
 function applyModeProfile(mode: InteractionMode): void {
@@ -389,6 +408,26 @@ app.whenReady().then(async () => {
     return { modelId: activeProfile.modelId };
   });
   ipcMain.handle("xpaw:get-character", () => ({ id: character.id, name: character.name, description: character.description, role: character.identity.role, summary: character.identity.summary, tone: character.personality.speaking_style.tone }));
+  ipcMain.handle("xpaw:list-character-cards", () => database.listCharacterCards());
+  ipcMain.handle("xpaw:import-character-card", async (_event, path: string) => importCharacterCard(path));
+  ipcMain.handle("xpaw:export-character-card", async (_event, id: string, targetPath: string) => {
+    const stored = database.getCharacterCard(id);
+    if (!stored) throw new Error("角色卡不存在。");
+    const card = migrateCharacterCard(stored.card);
+    await writeFile(targetPath, targetPath.toLowerCase().endsWith(".json") ? JSON.stringify(card, null, 2) : serializeCharacterCard(card), "utf8");
+  });
+  ipcMain.handle("xpaw:activate-character-card", (_event, id: string) => {
+    const stored = database.getCharacterCard(id);
+    if (!stored) throw new Error("角色卡不存在。");
+    character = migrateCharacterCard(stored.card);
+    applyCharacterOverride();
+    agent = createAgent(character);
+    conversationId = database.createConversation(character.id, "Desktop session");
+    return { id: character.id, name: character.name };
+  });
+  ipcMain.handle("xpaw:list-world-books", () => database.listWorldBooks());
+  ipcMain.handle("xpaw:save-world-book", (_event, book: Omit<WorldBook, "createdAt" | "updatedAt">) => database.upsertWorldBook(book));
+  ipcMain.handle("xpaw:delete-world-book", (_event, id: string) => database.deleteWorldBook(id));
   ipcMain.handle("xpaw:save-character", (_event, input: { name: string; description: string; role: string; summary: string; tone: string }) => {
     database.saveCharacterOverride({ characterId: character.id, ...input });
     character = { ...character, name: input.name, description: input.description, identity: { ...character.identity, role: input.role, summary: input.summary }, personality: { ...character.personality, speaking_style: { ...character.personality.speaking_style, tone: input.tone } } };

@@ -61,6 +61,13 @@ contextBridge.exposeInMainWorld("xpaw", {
   selectProfile: (id: string) => ipcRenderer.invoke("xpaw:select-profile", id),
   testProfile: (input: unknown) => ipcRenderer.invoke("xpaw:test-profile", input),
   getCharacter: () => ipcRenderer.invoke("xpaw:get-character"),
+  listCharacterCards: () => ipcRenderer.invoke("xpaw:list-character-cards"),
+  importCharacterCard: (path: string) => ipcRenderer.invoke("xpaw:import-character-card", path),
+  exportCharacterCard: (id: string, targetPath: string) => ipcRenderer.invoke("xpaw:export-character-card", id, targetPath),
+  activateCharacterCard: (id: string) => ipcRenderer.invoke("xpaw:activate-character-card", id),
+  listWorldBooks: () => ipcRenderer.invoke("xpaw:list-world-books"),
+  saveWorldBook: (book: unknown) => ipcRenderer.invoke("xpaw:save-world-book", book),
+  deleteWorldBook: (id: string) => ipcRenderer.invoke("xpaw:delete-world-book", id),
   saveCharacter: (character: unknown) => ipcRenderer.invoke("xpaw:save-character", character),
   selectModel: (modelId: string) => ipcRenderer.invoke("xpaw:select-model", modelId),
 });

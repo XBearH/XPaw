@@ -5,7 +5,7 @@ import { z } from "zod";
 import type { KnowledgeChunk, MemoryItem, UserProfile } from "./types.js";
 
 const characterCardSchema = z.object({
-  spec_version: z.literal(1),
+  spec_version: z.union([z.literal(1), z.literal(2)]),
   id: z.string().min(1).regex(/^[a-z0-9-]+$/, "Use lowercase letters, numbers, and hyphens."),
   name: z.string().min(1),
   description: z.string().min(1),
@@ -33,15 +33,27 @@ const characterCardSchema = z.object({
     forget: z.array(z.string()),
   }),
   example_dialogues: z.array(z.object({ user: z.string(), assistant: z.string() })).default([]),
+  world_book_id: z.string().optional(),
 });
 
 export type CharacterCard = z.infer<typeof characterCardSchema>;
+
+export function migrateCharacterCard(input: unknown): CharacterCard {
+  const value = (input && typeof input === "object") ? { ...(input as Record<string, unknown>) } : input;
+  if (value && typeof value === "object" && !("spec_version" in value)) (value as Record<string, unknown>).spec_version = 1;
+  const parsed = characterCardSchema.parse(value);
+  return { ...parsed, spec_version: 2 };
+}
 
 export async function loadCharacterCard(path: string): Promise<CharacterCard> {
   const text = await readFile(path, "utf8");
   const extension = extname(path).toLowerCase();
   const parsed: unknown = extension === ".json" ? JSON.parse(text) : yaml.load(text);
-  return characterCardSchema.parse(parsed);
+  return migrateCharacterCard(parsed);
+}
+
+export function serializeCharacterCard(card: CharacterCard): string {
+  return yaml.dump({ ...card, spec_version: 2 }, { noRefs: true, lineWidth: 120 });
 }
 
 export function compileSystemPrompt(card: CharacterCard, workspacePath: string, profile?: UserProfile, memories: MemoryItem[] = [], conversationSummary?: string, knowledge: KnowledgeChunk[] = []): string {

@@ -1,7 +1,7 @@
 import Database from "better-sqlite3";
 import { mkdirSync } from "node:fs";
 import { dirname } from "node:path";
-import type { ChatMessage, CompanionState, KnowledgeChunk, KnowledgeDocument, McpServerProfile, McpToolInfo, MemoryItem, ModelCapabilities, ModelProfile, PluginProfile, PluginToolInfo, SceneCheckpoint, TaskEvent, TaskStatus, TaskSummary, UserProfile } from "./types.js";
+import type { ChatMessage, CompanionState, KnowledgeChunk, KnowledgeDocument, McpServerProfile, McpToolInfo, MemoryItem, ModelCapabilities, ModelProfile, PluginProfile, PluginToolInfo, SceneCheckpoint, StoredCharacterCard, TaskEvent, TaskStatus, TaskSummary, UserProfile, WorldBook } from "./types.js";
 
 export class XPawDatabase {
   private readonly db: Database.Database;
@@ -207,6 +207,21 @@ export class XPawDatabase {
         title TEXT NOT NULL,
         summary TEXT NOT NULL,
         created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+      );
+      CREATE TABLE IF NOT EXISTS character_cards (
+        id TEXT PRIMARY KEY,
+        name TEXT NOT NULL,
+        card_json TEXT NOT NULL,
+        imported_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+        updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+      );
+      CREATE TABLE IF NOT EXISTS world_books (
+        id TEXT PRIMARY KEY,
+        name TEXT NOT NULL,
+        description TEXT NOT NULL,
+        entries_json TEXT NOT NULL DEFAULT '[]',
+        created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+        updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
       );
     `);
     this.ensureColumn("conversations", "pinned", "INTEGER NOT NULL DEFAULT 0");
@@ -522,6 +537,34 @@ export class XPawDatabase {
 
   deleteSceneCheckpoint(id: number): void {
     this.db.prepare("DELETE FROM scene_checkpoints WHERE id = ?").run(id);
+  }
+
+  listCharacterCards(): StoredCharacterCard[] {
+    const rows = this.db.prepare("SELECT id, name, card_json AS cardJson, imported_at AS importedAt, updated_at AS updatedAt FROM character_cards ORDER BY updated_at DESC").all() as Array<{ id: string; name: string; cardJson: string; importedAt: string; updatedAt: string }>;
+    return rows.map((row) => ({ id: row.id, name: row.name, card: JSON.parse(row.cardJson) as Record<string, unknown>, importedAt: row.importedAt, updatedAt: row.updatedAt }));
+  }
+
+  upsertCharacterCard(card: Omit<StoredCharacterCard, "importedAt" | "updatedAt">): void {
+    this.db.prepare(`INSERT INTO character_cards (id, name, card_json) VALUES (?, ?, ?)
+      ON CONFLICT(id) DO UPDATE SET name = excluded.name, card_json = excluded.card_json, updated_at = CURRENT_TIMESTAMP`).run(card.id, card.name, JSON.stringify(card.card));
+  }
+
+  getCharacterCard(id: string): StoredCharacterCard | undefined {
+    return this.listCharacterCards().find((card) => card.id === id);
+  }
+
+  listWorldBooks(): WorldBook[] {
+    const rows = this.db.prepare("SELECT id, name, description, entries_json AS entriesJson, created_at AS createdAt, updated_at AS updatedAt FROM world_books ORDER BY updated_at DESC").all() as Array<{ id: string; name: string; description: string; entriesJson: string; createdAt: string; updatedAt: string }>;
+    return rows.map((row) => ({ id: row.id, name: row.name, description: row.description, entries: JSON.parse(row.entriesJson), createdAt: row.createdAt, updatedAt: row.updatedAt }));
+  }
+
+  upsertWorldBook(book: Omit<WorldBook, "createdAt" | "updatedAt">): void {
+    this.db.prepare(`INSERT INTO world_books (id, name, description, entries_json) VALUES (?, ?, ?, ?)
+      ON CONFLICT(id) DO UPDATE SET name = excluded.name, description = excluded.description, entries_json = excluded.entries_json, updated_at = CURRENT_TIMESTAMP`).run(book.id, book.name, book.description, JSON.stringify(book.entries));
+  }
+
+  deleteWorldBook(id: string): void {
+    this.db.prepare("DELETE FROM world_books WHERE id = ?").run(id);
   }
 
   auditToolRun(input: {

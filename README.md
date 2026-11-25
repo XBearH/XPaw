@@ -20,6 +20,7 @@ XPaw is a local-first desktop AI character and task agent. It supports ordinary 
 - Appearance preferences: light, dark, system-following modes, and a local custom accent color.
 - v0.9 model capability metadata and mode-specific model defaults.
 - Portable JSON data export that excludes API keys, secrets, plugin/MCP permissions, and workspace files.
+- Versioned character card import/export and separate world book assets for roleplay.
 - Companion layer with editable relationship, boundaries, fictional scene state, and scene checkpoints.
 - Optional automatic startup of the local Ollama service from the desktop app.
 
@@ -177,6 +178,16 @@ The desktop runtime provides a portable JSON export for conversations, tasks, me
 ## Companion Layer
 
 The companion page keeps fictional roleplay state separate from real user memory. You can edit the relationship label, interaction boundaries, scene title, setting, and scene summary, then save scene checkpoints. In `Roleplay` mode XPaw does not expose real file, MCP, or plugin tools to the model. Use `Task` mode for real-world operations.
+
+## Character Cards And World Books
+
+XPaw separates roleplay data into three assets:
+
+- **Character card**: who the character is, including identity, personality, boundaries, goals, and examples.
+- **World book**: what the fictional world is, including its rules, locations, history, factions, and keyword-triggered entries.
+- **Companion state**: what is happening now, including relationship label, current scene, summary, and checkpoints.
+
+Character cards can be imported from JSON or YAML, validated, and migrated to XPaw card spec v2. They can be exported without model settings, workspace permissions, API keys, or other machine-specific data. World book entries are injected only in roleplay mode when their keywords match the current user message.
 
 ## Ollama Startup
 

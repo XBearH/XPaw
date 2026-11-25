@@ -202,3 +202,28 @@ export interface SceneCheckpoint {
   summary: string;
   createdAt: string;
 }
+
+export interface WorldBook {
+  id: string;
+  name: string;
+  description: string;
+  entries: WorldBookEntry[];
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface WorldBookEntry {
+  id: string;
+  title: string;
+  keywords: string[];
+  content: string;
+  priority: number;
+}
+
+export interface StoredCharacterCard {
+  id: string;
+  name: string;
+  card: Record<string, unknown>;
+  importedAt: string;
+  updatedAt: string;
+}

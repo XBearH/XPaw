@@ -112,4 +112,11 @@ describe("XPawDatabase", () => {
     expect(database.getModelCapabilities("profile")).toMatchObject({ roleplay: "suitable", contextWindow: 32768 });
     expect(database.getModeProfileId("roleplay")).toBe("profile");
   });
+
+  it("persists world books independently from character cards", () => {
+    database.upsertWorldBook({ id: "world", name: "新世界", description: "一座浮空城市。", entries: [{ id: "entry", title: "港口", keywords: ["港口"], content: "港口位于云层下方。", priority: 10 }] });
+    expect(database.listWorldBooks()).toMatchObject([{ id: "world", entries: [{ title: "港口" }] }]);
+    database.deleteWorldBook("world");
+    expect(database.listWorldBooks()).toHaveLength(0);
+  });
 });

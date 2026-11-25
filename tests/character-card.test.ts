@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { compileSystemPrompt } from "../src/character-card.js";
+import { compileSystemPrompt, migrateCharacterCard, serializeCharacterCard } from "../src/character-card.js";
 
 describe("compileSystemPrompt", () => {
   it("includes the card's safety boundaries and workspace", () => {
@@ -46,5 +46,14 @@ describe("compileSystemPrompt", () => {
     }, "D:/Workspace", undefined, [], undefined, [{ id: 1, documentId: 1, path: "D:/notes.md", name: "notes.md", startLine: 3, endLine: 4, content: "XPaw is local-first." }]);
     expect(prompt).toContain("notes.md:3-4");
     expect(prompt).toContain("[来源：filename:line]");
+  });
+
+  it("migrates an unversioned card and serializes current v2", () => {
+    const card = migrateCharacterCard({
+      id: "legacy-agent", name: "Legacy", description: "Test", identity: { role: "Companion", summary: "Test" },
+      personality: { traits: ["calm"], speaking_style: { language: "zh-CN", tone: "soft" }, boundaries: ["Be kind."] }, goals: { primary: ["Chat."] }, tool_policy: { allowed_tools: [], confirmation_required: [], forbidden: [] }, memory_policy: { confirmation_required: true, remember: [], forget: [] },
+    });
+    expect(card.spec_version).toBe(2);
+    expect(serializeCharacterCard(card)).toContain("spec_version: 2");
   });
 });

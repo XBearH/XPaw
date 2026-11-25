@@ -218,6 +218,7 @@ export interface WorldBookEntry {
   keywords: string[];
   content: string;
   priority: number;
+  enabled?: boolean;
 }
 
 export interface StoredCharacterCard {
@@ -226,4 +227,10 @@ export interface StoredCharacterCard {
   card: Record<string, unknown>;
   importedAt: string;
   updatedAt: string;
+}
+
+export interface ImportReport {
+  imported: string[];
+  skipped: string[];
+  warnings: string[];
 }

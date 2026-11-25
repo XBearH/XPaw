@@ -10,7 +10,7 @@ import { compileSystemPrompt, loadCharacterCard, migrateCharacterCard, serialize
 import { XPawDatabase } from "../database.js";
 import { OpenAiCompatibleClient } from "../ollama.js";
 import { WorkspaceTools } from "../tools.js";
-import type { CompanionState, InteractionMode, McpServerProfile, McpToolInfo, MemoryItem, ModelCapabilities, ModelProfile, PluginProfile, PluginToolInfo, UserProfile, WorldBook } from "../types.js";
+import type { CompanionState, ImportReport, InteractionMode, McpServerProfile, McpToolInfo, MemoryItem, ModelCapabilities, ModelProfile, PluginProfile, PluginToolInfo, UserProfile, WorldBook } from "../types.js";
 import { SecretVault } from "./secret-vault.js";
 import { McpClientManager } from "./mcp-client.js";
 import { PluginHost } from "./plugin-host.js";
@@ -163,7 +163,7 @@ function createAgentForRequest(userInput: string): Agent {
 
 function buildWorldContext(book: WorldBook, input: string): string {
   const lowered = input.toLowerCase();
-  const entries = book.entries.filter((entry) => entry.keywords.length === 0 || entry.keywords.some((keyword) => lowered.includes(keyword.toLowerCase()))).sort((a, b) => b.priority - a.priority).slice(0, 5);
+  const entries = book.entries.filter((entry) => entry.enabled !== false && (entry.keywords.length === 0 || entry.keywords.some((keyword) => lowered.includes(keyword.toLowerCase())))).sort((a, b) => b.priority - a.priority).slice(0, 5);
   const text = entries.map((entry) => `- ${entry.title}: ${entry.content}`).join("\n");
   return `- World: ${book.name}. ${book.description}\n${text ? `- Relevant world entries:\n${text}\n` : ""}`;
 }
@@ -176,6 +176,34 @@ async function importCharacterCard(filePath: string): Promise<CharacterCard> {
   const card = migrateCharacterCard(parsed);
   database.upsertCharacterCard({ id: card.id, name: card.name, card: card as unknown as Record<string, unknown> });
   return card;
+}
+
+async function importPortableData(filePath: string): Promise<ImportReport> {
+  const raw = JSON.parse(await readFile(filePath, "utf8")) as { schemaVersion?: unknown; memories?: unknown; worldBooks?: unknown; characterCards?: unknown; companionState?: unknown; sceneCheckpoints?: unknown };
+  const report: ImportReport = { imported: [], skipped: [], warnings: [] };
+  if (raw.schemaVersion !== 1) throw new Error("不支持的数据导入版本。请使用 XPaw v0.9 导出的 JSON 文件。");
+  if (Array.isArray(raw.characterCards)) {
+    for (const item of raw.characterCards) {
+      try { const stored = item as { card_json?: string; cardJson?: string }; const card = migrateCharacterCard(JSON.parse(stored.card_json ?? stored.cardJson ?? "{}")); database.upsertCharacterCard({ id: card.id, name: card.name, card: card as unknown as Record<string, unknown> }); report.imported.push(`人物卡：${card.name}`); } catch { report.skipped.push("一张无效人物卡"); }
+    }
+  }
+  if (Array.isArray(raw.worldBooks)) {
+    for (const item of raw.worldBooks) {
+      const book = item as { id?: string; name?: string; description?: string; entries_json?: string; entries?: unknown[] };
+      if (!book.id || !book.name) { report.skipped.push("一个无效世界书"); continue; }
+      const entries = Array.isArray(book.entries) ? book.entries : JSON.parse(book.entries_json ?? "[]");
+      database.upsertWorldBook({ id: book.id, name: book.name, description: book.description ?? "", entries: entries as WorldBook["entries"] }); report.imported.push(`世界书：${book.name}`);
+    }
+  }
+  if (Array.isArray(raw.memories)) {
+    for (const item of raw.memories) {
+      const memory = item as { category?: MemoryItem["category"]; content?: string; source?: string };
+      if (!memory.category || !memory.content) { report.skipped.push("一条无效记忆"); continue; }
+      database.addMemory({ category: memory.category, content: memory.content, source: memory.source ?? "import" }); report.imported.push("一条长期记忆");
+    }
+  }
+  report.warnings.push("API Key、加密密钥、MCP/插件权限、工作区文件和会话原文不会导入。");
+  return report;
 }
 
 function applyModeProfile(mode: InteractionMode): void {
@@ -307,6 +335,7 @@ app.whenReady().then(async () => {
     if (!targetPath.toLowerCase().endsWith(".json")) throw new Error("导出文件必须使用 .json 扩展名。");
     await writeFile(targetPath, JSON.stringify(database.exportPortableData(), null, 2), "utf8");
   });
+  ipcMain.handle("xpaw:import-data", async (_event, path: string) => importPortableData(path));
   ipcMain.handle("xpaw:get-mode-profiles", () => ({ conversation: database.getModeProfileId("conversation"), roleplay: database.getModeProfileId("roleplay"), task: database.getModeProfileId("task") }));
   ipcMain.handle("xpaw:set-mode-profile", (_event, mode: InteractionMode, profileId: string) => database.setModeProfileId(mode, profileId));
   ipcMain.handle("xpaw:get-ollama-status", async () => ({ available: await isOllamaAvailable(), autostart: database.getSetting("ollama_autostart") !== "false" }));

@@ -17,6 +17,7 @@ contextBridge.exposeInMainWorld("xpaw", {
   },
   getConfig: () => ipcRenderer.invoke("xpaw:get-config"),
   exportData: (targetPath: string) => ipcRenderer.invoke("xpaw:export-data", targetPath),
+  importData: (path: string) => ipcRenderer.invoke("xpaw:import-data", path),
   getModeProfiles: () => ipcRenderer.invoke("xpaw:get-mode-profiles"),
   setModeProfile: (mode: string, profileId: string) => ipcRenderer.invoke("xpaw:set-mode-profile", mode, profileId),
   getOllamaStatus: () => ipcRenderer.invoke("xpaw:get-ollama-status"),

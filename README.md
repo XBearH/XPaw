@@ -17,6 +17,7 @@ XPaw is a local-first desktop AI character and task agent. It supports ordinary 
 - Local text knowledge base with document chunks, FTS5 search, and source citations.
 - Controlled MCP client for local stdio tool servers with per-tool authorization.
 - Local Plugin SDK with manifest validation, isolated Node processes, JSON Lines RPC, and per-tool authorization.
+- Appearance preferences: light, dark, system-following modes, and a local custom accent color.
 
 ## Requirements
 
@@ -144,6 +145,24 @@ Plugins are local directories added manually from the desktop plugin page. Every
 ```
 
 XPaw launches the declared entry in an isolated Node child process. The plugin communicates only through JSON Lines RPC using `tools/list` and `tools/call`; it does not receive XPaw's Electron IPC, database connection, model keys, or main-process APIs. Plugin tools default to `ask`, and use the same audit, confirmation, cancellation, and timeout boundaries as built-in and MCP tools. See [`examples/echo-plugin`](examples/echo-plugin) for a minimal protocol example.
+
+## Companion And Roleplay Direction
+
+XPaw currently supports ordinary conversation and fictional roleplay through each character card. The agent runtime remains deliberately separate from roleplay: fictional scene events do not become real device actions, and real tools are invoked only for explicit requests.
+
+The next companion-focused releases will build on this boundary with:
+
+- Per-character relationship and scene continuity that is visible and editable by the user.
+- Roleplay-specific context policies that preserve setting details without treating fictional events as factual user memories.
+- Character creation templates for companionship, collaborative work, and story scenes.
+- Clear transitions between chat, roleplay, and task execution, so the assistant does not abruptly turn a scene into an automation workflow.
+- Optional richer local or cloud models selected through the existing model profile system.
+
+The visual direction is intentionally XPaw-specific: a restrained companion-focused entry point and paw mark, not a copy of another product's brand, text, or media.
+
+## Appearance
+
+Open desktop settings to choose light mode, dark mode, or follow-system mode. You can also select a custom accent color. Appearance settings are stored locally in the desktop application's browser storage and do not affect character cards or shared project data.
 
 If a reboot stops the local model server, first launch the Ollama application, or run the following in a separate PowerShell window while the iKuuuVPN local proxy is available:
 

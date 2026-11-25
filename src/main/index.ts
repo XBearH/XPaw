@@ -3,13 +3,14 @@ import { app, BrowserWindow, dialog, ipcMain } from "electron";
 import { fileURLToPath } from "node:url";
 import { basename, dirname, extname, join, resolve } from "node:path";
 import { mkdir, readFile, stat } from "node:fs/promises";
+import { spawn, type ChildProcess } from "node:child_process";
 import { createHash } from "node:crypto";
 import { Agent } from "../agent.js";
 import { compileSystemPrompt, loadCharacterCard, type CharacterCard } from "../character-card.js";
 import { XPawDatabase } from "../database.js";
 import { OpenAiCompatibleClient } from "../ollama.js";
 import { WorkspaceTools } from "../tools.js";
-import type { McpServerProfile, McpToolInfo, MemoryItem, ModelProfile, PluginProfile, PluginToolInfo, UserProfile } from "../types.js";
+import type { CompanionState, InteractionMode, McpServerProfile, McpToolInfo, MemoryItem, ModelProfile, PluginProfile, PluginToolInfo, UserProfile } from "../types.js";
 import { SecretVault } from "./secret-vault.js";
 import { McpClientManager } from "./mcp-client.js";
 import { PluginHost } from "./plugin-host.js";
@@ -32,6 +33,8 @@ const activeRequests = new Map<string, AbortController>();
 const mcp = new McpClientManager();
 const plugins = new PluginHost();
 const pluginTools = new Map<string, PluginToolInfo[]>();
+let ollamaProcess: ChildProcess | undefined;
+let interactionMode: InteractionMode = "conversation";
 
 function startTaskStream(sender: { send(channel: string, ...args: unknown[]): void }, input: { requestId: string; message: string }, saveUser = true): void {
   if (activeRequests.has(input.requestId)) throw new Error("This request is already active.");
@@ -63,6 +66,8 @@ async function bootstrapRuntime(): Promise<void> {
   await mkdir(workspacePath, { recursive: true });
   character = await loadCharacterCard(join(root, "characters", "default.yaml"));
   database = new XPawDatabase(join(root, "data", "xpaw.sqlite"));
+  if (database.getSetting("ollama_autostart") === undefined) database.setSetting("ollama_autostart", "true");
+  if (database.getSetting("ollama_autostart") === "true") await ensureOllamaRunning();
   const profileId = "local-ollama-default";
   const existingProfile = database.listModelProfiles().find((profile) => profile.id === profileId);
   if (!existingProfile) database.upsertModelProfile({ id: profileId, name: "本地 Ollama", provider: "ollama", baseUrl, modelId, temperature: 0.35, maxTokens: 384, toolsEnabled: true, local: true });
@@ -70,6 +75,28 @@ async function bootstrapRuntime(): Promise<void> {
   applyCharacterOverride();
   conversationId = database.createConversation(character.id, "Desktop session");
   agent = createAgent(character);
+}
+
+async function isOllamaAvailable(): Promise<boolean> {
+  try { return (await fetch(`${baseUrl.replace(/\/v1$/, "")}/api/tags`, { signal: AbortSignal.timeout(2_000) })).ok; }
+  catch { return false; }
+}
+
+async function ensureOllamaRunning(): Promise<boolean> {
+  if (await isOllamaAvailable()) return true;
+  const executable = process.env.OLLAMA_EXECUTABLE || "D:\\Ollama\\ollama.exe";
+  try {
+    ollamaProcess = spawn(executable, ["serve"], {
+      windowsHide: true,
+      env: { ...process.env, OLLAMA_MODELS: process.env.OLLAMA_MODELS || "D:\\OllamaModels", HTTPS_PROXY: process.env.HTTPS_PROXY || "http://127.0.0.1:7890", NO_PROXY: "127.0.0.1,localhost,::1" },
+      stdio: "ignore",
+    });
+    for (let attempt = 0; attempt < 20; attempt += 1) {
+      await new Promise((resolveWait) => setTimeout(resolveWait, 1_000));
+      if (await isOllamaAvailable()) return true;
+    }
+  } catch { /* The desktop UI will show model connection failures normally. */ }
+  return false;
 }
 
 function applyCharacterOverride(): void {
@@ -107,6 +134,7 @@ function createAgent(character: Awaited<ReturnType<typeof loadCharacterCard>>): 
     { provider: activeProfile.provider, modelId: activeProfile.modelId },
     externalTools,
     async (name, args) => executeExternalTool(name, args),
+    interactionMode !== "roleplay",
   );
 }
 
@@ -116,13 +144,15 @@ function createAgentForRequest(userInput: string): Agent {
   const summary = database.getConversationSummary(conversationId)?.content;
   const knowledge = database.searchKnowledge(userInput);
   const mcpProfiles = database.listMcpServers();
-  const externalTools = [...mcp.getAuthorizedToolDefinitions(mcpProfiles, (serverId, toolName) => database.getMcpToolAuthorization(serverId, toolName)), ...plugins.getToolDefinitions(database.listPlugins(), pluginTools)];
+  const companion = database.getCompanionState(character.id);
+  const externalTools = interactionMode === "roleplay" ? [] : [...mcp.getAuthorizedToolDefinitions(mcpProfiles, (serverId, toolName) => database.getMcpToolAuthorization(serverId, toolName)), ...plugins.getToolDefinitions(database.listPlugins(), pluginTools)];
+  const companionContext = interactionMode === "roleplay" ? `\nRoleplay mode:\n- Relationship: ${companion.relationshipLabel}\n- Boundaries: ${companion.boundaries || "not set"}\n- Scene: ${companion.sceneTitle || "not set"}\n- Setting: ${companion.sceneSetting || "not set"}\n- Scene summary: ${companion.sceneSummary || "not set"}\n- Stay in fictional roleplay. Do not call real tools in this mode.\n` : interactionMode === "task" ? "\nTask mode: prioritize plans, explicit tool results, and concise status updates.\n" : "\nConversation mode: respond naturally; only use real tools for explicit real-world requests.\n";
   return new Agent(
     new OpenAiCompatibleClient(activeProfile.baseUrl, activeProfile, activeProfile.id === "local-ollama-default" ? apiKey : vault.get(activeProfile.id)),
     database,
     new WorkspaceTools(workspacePath),
     async (question) => (await dialog.showMessageBox({ type: "warning", title: "Confirm file write", message: "XPaw requests permission to write a file.", detail: question, buttons: ["Approve", "Deny"], defaultId: 1, cancelId: 1 })).response === 0,
-    compileSystemPrompt(character, workspacePath, profile, memories, summary, knowledge),
+    compileSystemPrompt(character, workspacePath, profile, memories, summary, knowledge) + companionContext,
     { provider: activeProfile.provider, modelId: activeProfile.modelId },
     externalTools,
     async (name, args) => executeExternalTool(name, args),
@@ -244,6 +274,15 @@ app.whenReady().then(async () => {
   ipcMain.handle("xpaw:rename-conversation", (_event, id: number, title: string) => database.renameConversation(id, title.trim().slice(0, 80) || "未命名对话"));
   ipcMain.handle("xpaw:delete-conversation", (_event, id: number) => database.deleteConversation(id));
   ipcMain.handle("xpaw:get-config", () => ({ provider: activeProfile.provider, modelId: activeProfile.modelId, workspacePath, local: activeProfile.local }));
+  ipcMain.handle("xpaw:get-ollama-status", async () => ({ available: await isOllamaAvailable(), autostart: database.getSetting("ollama_autostart") !== "false" }));
+  ipcMain.handle("xpaw:set-ollama-autostart", (_event, enabled: boolean) => database.setSetting("ollama_autostart", enabled ? "true" : "false"));
+  ipcMain.handle("xpaw:start-ollama", async () => ({ available: await ensureOllamaRunning(), autostart: database.getSetting("ollama_autostart") !== "false" }));
+  ipcMain.handle("xpaw:get-companion-state", () => database.getCompanionState(character.id));
+  ipcMain.handle("xpaw:save-companion-state", (_event, state: Omit<CompanionState, "updatedAt">) => database.saveCompanionState(character.id, state));
+  ipcMain.handle("xpaw:set-interaction-mode", (_event, mode: InteractionMode) => { interactionMode = mode; });
+  ipcMain.handle("xpaw:list-scene-checkpoints", () => database.listSceneCheckpoints(character.id));
+  ipcMain.handle("xpaw:add-scene-checkpoint", (_event, title: string, summary: string) => database.addSceneCheckpoint(character.id, title, summary));
+  ipcMain.handle("xpaw:delete-scene-checkpoint", (_event, id: number) => database.deleteSceneCheckpoint(id));
   ipcMain.handle("xpaw:get-usage", (_event, filter?: { modelId?: string; days?: number }) => database.getUsageSummary(filter?.modelId, filter?.days));
   ipcMain.handle("xpaw:get-memory", () => ({ profile: database.getUserProfile(), memories: database.listMemories() }));
   ipcMain.handle("xpaw:save-user-profile", (_event, profile: UserProfile) => database.saveUserProfile(profile));

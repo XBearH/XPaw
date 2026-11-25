@@ -18,6 +18,8 @@ XPaw is a local-first desktop AI character and task agent. It supports ordinary 
 - Controlled MCP client for local stdio tool servers with per-tool authorization.
 - Local Plugin SDK with manifest validation, isolated Node processes, JSON Lines RPC, and per-tool authorization.
 - Appearance preferences: light, dark, system-following modes, and a local custom accent color.
+- Companion layer with editable relationship, boundaries, fictional scene state, and scene checkpoints.
+- Optional automatic startup of the local Ollama service from the desktop app.
 
 ## Requirements
 
@@ -163,6 +165,14 @@ The visual direction is intentionally XPaw-specific: a restrained companion-focu
 ## Appearance
 
 Open desktop settings to choose light mode, dark mode, or follow-system mode. You can also select a custom accent color. Appearance settings are stored locally in the desktop application's browser storage and do not affect character cards or shared project data.
+
+## Companion Layer
+
+The companion page keeps fictional roleplay state separate from real user memory. You can edit the relationship label, interaction boundaries, scene title, setting, and scene summary, then save scene checkpoints. In `Roleplay` mode XPaw does not expose real file, MCP, or plugin tools to the model. Use `Task` mode for real-world operations.
+
+## Ollama Startup
+
+When the active profile is local Ollama, XPaw checks the local API during desktop startup. If it is unavailable and the setting is enabled, XPaw starts `D:\Ollama\ollama.exe serve` with the configured local model directory and waits for the API. The setting can be disabled in desktop settings. XPaw does not stop an Ollama service it did not start.
 
 If a reboot stops the local model server, first launch the Ollama application, or run the following in a separate PowerShell window while the iKuuuVPN local proxy is available:
 

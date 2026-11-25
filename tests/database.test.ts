@@ -95,4 +95,13 @@ describe("XPawDatabase", () => {
     database.deleteMcpServer("mcp-test");
     expect(database.listMcpServers()).toHaveLength(0);
   });
+
+  it("persists companion state and scene checkpoints separately from user memories", () => {
+    database.saveCompanionState("test-agent", { relationshipLabel: "搭档", boundaries: "保持轻松", sceneTitle: "雨夜咖啡馆", sceneSetting: "靠窗座位", sceneSummary: "正在聊天" });
+    expect(database.getCompanionState("test-agent")).toMatchObject({ relationshipLabel: "搭档", sceneTitle: "雨夜咖啡馆" });
+    const checkpointId = database.addSceneCheckpoint("test-agent", "第一幕", "雨夜的咖啡馆对话。");
+    expect(database.listSceneCheckpoints("test-agent")).toMatchObject([{ id: checkpointId, title: "第一幕" }]);
+    database.deleteSceneCheckpoint(checkpointId);
+    expect(database.listSceneCheckpoints("test-agent")).toHaveLength(0);
+  });
 });

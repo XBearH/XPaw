@@ -177,3 +177,21 @@ export interface PluginToolInfo {
   inputSchema: Record<string, unknown>;
   authorization: "ask" | "always" | "deny";
 }
+
+export type InteractionMode = "conversation" | "roleplay" | "task";
+
+export interface CompanionState {
+  relationshipLabel: string;
+  boundaries: string;
+  sceneTitle: string;
+  sceneSetting: string;
+  sceneSummary: string;
+  updatedAt: string;
+}
+
+export interface SceneCheckpoint {
+  id: number;
+  title: string;
+  summary: string;
+  createdAt: string;
+}

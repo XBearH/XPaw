@@ -1,7 +1,7 @@
 import Database from "better-sqlite3";
 import { mkdirSync } from "node:fs";
 import { dirname } from "node:path";
-import type { ChatMessage, KnowledgeChunk, KnowledgeDocument, McpServerProfile, McpToolInfo, MemoryItem, ModelProfile, PluginProfile, PluginToolInfo, TaskEvent, TaskStatus, TaskSummary, UserProfile } from "./types.js";
+import type { ChatMessage, CompanionState, KnowledgeChunk, KnowledgeDocument, McpServerProfile, McpToolInfo, MemoryItem, ModelProfile, PluginProfile, PluginToolInfo, SceneCheckpoint, TaskEvent, TaskStatus, TaskSummary, UserProfile } from "./types.js";
 
 export class XPawDatabase {
   private readonly db: Database.Database;
@@ -180,6 +180,26 @@ export class XPawDatabase {
         tool_name TEXT NOT NULL,
         authorization TEXT NOT NULL DEFAULT 'ask',
         PRIMARY KEY (plugin_id, tool_name)
+      );
+      CREATE TABLE IF NOT EXISTS app_settings (
+        key TEXT PRIMARY KEY,
+        value TEXT NOT NULL
+      );
+      CREATE TABLE IF NOT EXISTS companion_state (
+        character_id TEXT PRIMARY KEY,
+        relationship_label TEXT NOT NULL DEFAULT '朋友',
+        boundaries TEXT NOT NULL DEFAULT '',
+        scene_title TEXT NOT NULL DEFAULT '',
+        scene_setting TEXT NOT NULL DEFAULT '',
+        scene_summary TEXT NOT NULL DEFAULT '',
+        updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+      );
+      CREATE TABLE IF NOT EXISTS scene_checkpoints (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        character_id TEXT NOT NULL,
+        title TEXT NOT NULL,
+        summary TEXT NOT NULL,
+        created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
       );
     `);
   }
@@ -416,6 +436,36 @@ export class XPawDatabase {
   setPluginToolAuthorization(pluginId: string, toolName: string, authorization: PluginToolInfo["authorization"]): void {
     this.db.prepare(`INSERT INTO plugin_tool_permissions (plugin_id, tool_name, authorization) VALUES (?, ?, ?)
       ON CONFLICT(plugin_id, tool_name) DO UPDATE SET authorization = excluded.authorization`).run(pluginId, toolName, authorization);
+  }
+
+  getSetting(key: string): string | undefined {
+    return (this.db.prepare("SELECT value FROM app_settings WHERE key = ?").get(key) as { value: string } | undefined)?.value;
+  }
+
+  setSetting(key: string, value: string): void {
+    this.db.prepare("INSERT INTO app_settings (key, value) VALUES (?, ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value").run(key, value);
+  }
+
+  getCompanionState(characterId: string): CompanionState {
+    const row = this.db.prepare("SELECT relationship_label AS relationshipLabel, boundaries, scene_title AS sceneTitle, scene_setting AS sceneSetting, scene_summary AS sceneSummary, updated_at AS updatedAt FROM companion_state WHERE character_id = ?").get(characterId) as CompanionState | undefined;
+    return row ?? { relationshipLabel: "朋友", boundaries: "", sceneTitle: "", sceneSetting: "", sceneSummary: "", updatedAt: "" };
+  }
+
+  saveCompanionState(characterId: string, state: Omit<CompanionState, "updatedAt">): void {
+    this.db.prepare(`INSERT INTO companion_state (character_id, relationship_label, boundaries, scene_title, scene_setting, scene_summary) VALUES (?, ?, ?, ?, ?, ?)
+      ON CONFLICT(character_id) DO UPDATE SET relationship_label = excluded.relationship_label, boundaries = excluded.boundaries, scene_title = excluded.scene_title, scene_setting = excluded.scene_setting, scene_summary = excluded.scene_summary, updated_at = CURRENT_TIMESTAMP`).run(characterId, state.relationshipLabel, state.boundaries, state.sceneTitle, state.sceneSetting, state.sceneSummary);
+  }
+
+  listSceneCheckpoints(characterId: string): SceneCheckpoint[] {
+    return this.db.prepare("SELECT id, title, summary, created_at AS createdAt FROM scene_checkpoints WHERE character_id = ? ORDER BY id DESC").all(characterId) as SceneCheckpoint[];
+  }
+
+  addSceneCheckpoint(characterId: string, title: string, summary: string): number {
+    return Number(this.db.prepare("INSERT INTO scene_checkpoints (character_id, title, summary) VALUES (?, ?, ?)").run(characterId, title, summary).lastInsertRowid);
+  }
+
+  deleteSceneCheckpoint(id: number): void {
+    this.db.prepare("DELETE FROM scene_checkpoints WHERE id = ?").run(id);
   }
 
   auditToolRun(input: {

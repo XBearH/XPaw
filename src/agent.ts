@@ -15,6 +15,7 @@ export class Agent {
     private readonly modelInfo: { provider: string; modelId: string } = { provider: "unknown", modelId: "unknown" },
     private readonly externalTools: ToolDefinition[] = [],
     private readonly executeExternal?: (name: string, args: Record<string, unknown>) => Promise<ToolResult>,
+    private readonly builtinsEnabled = true,
   ) {}
 
   async respond(conversationId: number, userInput: string): Promise<string> {
@@ -28,7 +29,7 @@ export class Agent {
       const startedAt = Date.now();
       let response;
       try {
-        response = await this.model.chat(messages, [...toolDefinitions, ...this.externalTools]);
+        response = await this.model.chat(messages, [...(this.builtinsEnabled ? toolDefinitions : []), ...this.externalTools]);
         this.database.recordModelRun({
           conversationId,
           provider: this.modelInfo.provider,
@@ -84,7 +85,7 @@ export class Agent {
         const startedAt = Date.now();
         let response;
         try {
-          const stream = this.model.streamChat(messages, [...toolDefinitions, ...this.externalTools], signal);
+          const stream = this.model.streamChat(messages, [...(this.builtinsEnabled ? toolDefinitions : []), ...this.externalTools], signal);
           for await (const event of stream) {
             if (event.type === "text_delta") { finalContent += event.delta; yield event; }
             else response = event.response;

@@ -38,4 +38,13 @@ describe("compileSystemPrompt", () => {
     expect(prompt).toContain("Use Chinese");
     expect(prompt).toContain("Earlier context");
   });
+
+  it("adds knowledge excerpts with source citation instructions", () => {
+    const prompt = compileSystemPrompt({
+      spec_version: 1, id: "test-agent", name: "Test", description: "Test", identity: { role: "Assistant", summary: "Test" },
+      personality: { traits: ["clear"], speaking_style: { language: "zh-CN", tone: "calm" }, boundaries: ["Be accurate."] }, goals: { primary: ["Help."] }, tool_policy: { allowed_tools: [], confirmation_required: [], forbidden: [] }, memory_policy: { confirmation_required: true, remember: [], forget: [] }, example_dialogues: [],
+    }, "D:/Workspace", undefined, [], undefined, [{ id: 1, documentId: 1, path: "D:/notes.md", name: "notes.md", startLine: 3, endLine: 4, content: "XPaw is local-first." }]);
+    expect(prompt).toContain("notes.md:3-4");
+    expect(prompt).toContain("[来源：filename:line]");
+  });
 });

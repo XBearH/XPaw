@@ -77,4 +77,12 @@ describe("XPawDatabase", () => {
     database.deleteMemory(memoryId);
     expect(database.searchMemories("中文回答")).toHaveLength(0);
   });
+
+  it("indexes and searches local knowledge chunks", () => {
+    database.upsertKnowledgeDocument({ path: "D:/notes/project.md", name: "project.md", contentHash: "hash", chunks: [{ startLine: 1, endLine: 2, content: "XPaw uses SQLite for local state." }] });
+    expect(database.searchKnowledge("SQLite")).toMatchObject([{ name: "project.md", startLine: 1 }]);
+    const document = database.listKnowledgeDocuments()[0];
+    database.deleteKnowledgeDocument(document.id);
+    expect(database.listKnowledgeDocuments()).toHaveLength(0);
+  });
 });

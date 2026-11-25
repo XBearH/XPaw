@@ -14,6 +14,7 @@ XPaw is a local-first desktop AI character and task agent. It supports ordinary 
 - Persistent agent tasks with plans, confirmations, tool events, cancellation, time limits, audit history, and safe rerun.
 - Workspace-scoped file list, read, search, and confirmation-gated text-file write tools.
 - User profile, explicit long-term memories, local memory search, and manageable conversation summaries.
+- Local text knowledge base with document chunks, FTS5 search, and source citations.
 
 ## Requirements
 
@@ -109,6 +110,12 @@ XPaw keeps memory controllable and local:
 - Relevant memories are retrieved locally for a new request. XPaw injects at most five matching user-approved memories.
 - Passwords, verification codes, API keys, and access tokens must not be saved as memories.
 - Long conversations are summarized after a conservative threshold. The summary is visible and can be deleted from the memory page.
+
+## Local Knowledge Base
+
+XPaw can index user-selected local text files without copying the original files into the project. Version `v0.5` supports UTF-8 `.txt`, `.md`, `.json`, `.csv`, `.yaml`, and `.yml` files up to 5 MB. Documents are split into local SQLite FTS5 chunks. When relevant excerpts are used, XPaw is instructed to cite them as `[来源：filename:line]`.
+
+PDF, DOCX, XLSX, OCR, embeddings, and vector search are intentionally not included yet. The knowledge page clearly rejects unsupported formats instead of pretending to parse them.
 
 If a reboot stops the local model server, first launch the Ollama application, or run the following in a separate PowerShell window while the iKuuuVPN local proxy is available:
 

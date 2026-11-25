@@ -1,7 +1,7 @@
 import Database from "better-sqlite3";
 import { mkdirSync } from "node:fs";
 import { dirname } from "node:path";
-import type { ChatMessage, MemoryItem, ModelProfile, TaskEvent, TaskStatus, TaskSummary, UserProfile } from "./types.js";
+import type { ChatMessage, KnowledgeChunk, KnowledgeDocument, MemoryItem, ModelProfile, TaskEvent, TaskStatus, TaskSummary, UserProfile } from "./types.js";
 
 export class XPawDatabase {
   private readonly db: Database.Database;
@@ -125,6 +125,29 @@ export class XPawDatabase {
         source_message_count INTEGER NOT NULL,
         updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
       );
+      CREATE TABLE IF NOT EXISTS knowledge_documents (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        path TEXT NOT NULL UNIQUE,
+        name TEXT NOT NULL,
+        content_hash TEXT NOT NULL,
+        chunk_count INTEGER NOT NULL,
+        imported_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+        updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+      );
+      CREATE TABLE IF NOT EXISTS knowledge_chunks (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        document_id INTEGER NOT NULL REFERENCES knowledge_documents(id) ON DELETE CASCADE,
+        start_line INTEGER NOT NULL,
+        end_line INTEGER NOT NULL,
+        content TEXT NOT NULL
+      );
+      CREATE VIRTUAL TABLE IF NOT EXISTS knowledge_chunks_fts USING fts5(content, content='knowledge_chunks', content_rowid='id');
+      CREATE TRIGGER IF NOT EXISTS knowledge_chunks_ai AFTER INSERT ON knowledge_chunks BEGIN
+        INSERT INTO knowledge_chunks_fts(rowid, content) VALUES (new.id, new.content);
+      END;
+      CREATE TRIGGER IF NOT EXISTS knowledge_chunks_ad AFTER DELETE ON knowledge_chunks BEGIN
+        INSERT INTO knowledge_chunks_fts(knowledge_chunks_fts, rowid, content) VALUES ('delete', old.id, old.content);
+      END;
     `);
   }
 
@@ -273,6 +296,43 @@ export class XPawDatabase {
 
   deleteConversationSummary(conversationId: number): void {
     this.db.prepare("DELETE FROM conversation_summaries WHERE conversation_id = ?").run(conversationId);
+  }
+
+  listKnowledgeDocuments(): KnowledgeDocument[] {
+    return this.db.prepare("SELECT id, path, name, content_hash AS contentHash, chunk_count AS chunkCount, imported_at AS importedAt, updated_at AS updatedAt FROM knowledge_documents ORDER BY updated_at DESC").all() as KnowledgeDocument[];
+  }
+
+  upsertKnowledgeDocument(input: { path: string; name: string; contentHash: string; chunks: Array<{ startLine: number; endLine: number; content: string }> }): void {
+    const transaction = this.db.transaction(() => {
+      const existing = this.db.prepare("SELECT id FROM knowledge_documents WHERE path = ?").get(input.path) as { id: number } | undefined;
+      if (existing) {
+        this.db.prepare("DELETE FROM knowledge_chunks WHERE document_id = ?").run(existing.id);
+        this.db.prepare("UPDATE knowledge_documents SET name = ?, content_hash = ?, chunk_count = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?").run(input.name, input.contentHash, input.chunks.length, existing.id);
+        for (const chunk of input.chunks) this.db.prepare("INSERT INTO knowledge_chunks (document_id, start_line, end_line, content) VALUES (?, ?, ?, ?)").run(existing.id, chunk.startLine, chunk.endLine, chunk.content);
+        return;
+      }
+      const result = this.db.prepare("INSERT INTO knowledge_documents (path, name, content_hash, chunk_count) VALUES (?, ?, ?, ?)").run(input.path, input.name, input.contentHash, input.chunks.length);
+      const documentId = Number(result.lastInsertRowid);
+      for (const chunk of input.chunks) this.db.prepare("INSERT INTO knowledge_chunks (document_id, start_line, end_line, content) VALUES (?, ?, ?, ?)").run(documentId, chunk.startLine, chunk.endLine, chunk.content);
+    });
+    transaction();
+  }
+
+  deleteKnowledgeDocument(id: number): void {
+    this.db.prepare("DELETE FROM knowledge_chunks WHERE document_id = ?").run(id);
+    this.db.prepare("DELETE FROM knowledge_documents WHERE id = ?").run(id);
+  }
+
+  searchKnowledge(query: string, limit = 6): KnowledgeChunk[] {
+    const trimmed = query.trim();
+    if (!trimmed) return [];
+    if (/\p{Script=Han}/u.test(trimmed)) {
+      return this.db.prepare(`SELECT c.id, c.document_id AS documentId, d.path, d.name, c.start_line AS startLine, c.end_line AS endLine, c.content FROM knowledge_chunks c JOIN knowledge_documents d ON d.id = c.document_id WHERE c.content LIKE ? ORDER BY d.updated_at DESC LIMIT ?`).all(`%${trimmed}%`, limit) as KnowledgeChunk[];
+    }
+    const tokens = trimmed.match(/[\p{L}\p{N}_]+/gu)?.slice(0, 8) ?? [];
+    if (tokens.length === 0) return [];
+    const expression = tokens.map((token) => `"${token.replaceAll('"', '""')}"`).join(" OR ");
+    return this.db.prepare(`SELECT c.id, c.document_id AS documentId, d.path, d.name, c.start_line AS startLine, c.end_line AS endLine, c.content FROM knowledge_chunks_fts f JOIN knowledge_chunks c ON c.id = f.rowid JOIN knowledge_documents d ON d.id = c.document_id WHERE knowledge_chunks_fts MATCH ? ORDER BY bm25(knowledge_chunks_fts) LIMIT ?`).all(expression, limit) as KnowledgeChunk[];
   }
 
   auditToolRun(input: {

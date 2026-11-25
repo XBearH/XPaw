@@ -110,3 +110,23 @@ export interface UserProfile {
   timezone: string;
   communicationStyle: string;
 }
+
+export interface KnowledgeDocument {
+  id: number;
+  path: string;
+  name: string;
+  contentHash: string;
+  chunkCount: number;
+  importedAt: string;
+  updatedAt: string;
+}
+
+export interface KnowledgeChunk {
+  id: number;
+  documentId: number;
+  path: string;
+  name: string;
+  startLine: number;
+  endLine: number;
+  content: string;
+}

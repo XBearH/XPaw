@@ -1,8 +1,9 @@
 import "dotenv/config";
 import { app, BrowserWindow, dialog, ipcMain } from "electron";
 import { fileURLToPath } from "node:url";
-import { dirname, join, resolve } from "node:path";
-import { mkdir } from "node:fs/promises";
+import { basename, dirname, extname, join, resolve } from "node:path";
+import { mkdir, readFile, stat } from "node:fs/promises";
+import { createHash } from "node:crypto";
 import { Agent } from "../agent.js";
 import { compileSystemPrompt, loadCharacterCard, type CharacterCard } from "../character-card.js";
 import { XPawDatabase } from "../database.js";
@@ -41,6 +42,7 @@ function startTaskStream(sender: { send(channel: string, ...args: unknown[]): vo
       for await (const streamEvent of requestAgent.streamRespond(conversationId, input.message, controller.signal, taskId, saveUser)) {
         sender.send("xpaw:stream-event", { requestId: input.requestId, taskId, ...streamEvent });
       }
+      await summarizeConversationIfNeeded();
     } finally {
       clearTimeout(timeout);
       if (timedOut) {
@@ -102,14 +104,43 @@ function createAgent(character: Awaited<ReturnType<typeof loadCharacterCard>>): 
 function createAgentForRequest(userInput: string): Agent {
   const profile = database.getUserProfile();
   const memories = database.searchMemories(userInput);
+  const summary = database.getConversationSummary(conversationId)?.content;
+  const knowledge = database.searchKnowledge(userInput);
   return new Agent(
     new OpenAiCompatibleClient(activeProfile.baseUrl, activeProfile, activeProfile.id === "local-ollama-default" ? apiKey : vault.get(activeProfile.id)),
     database,
     new WorkspaceTools(workspacePath),
     async (question) => (await dialog.showMessageBox({ type: "warning", title: "Confirm file write", message: "XPaw requests permission to write a file.", detail: question, buttons: ["Approve", "Deny"], defaultId: 1, cancelId: 1 })).response === 0,
-    compileSystemPrompt(character, workspacePath, profile, memories),
+    compileSystemPrompt(character, workspacePath, profile, memories, summary, knowledge),
     { provider: activeProfile.provider, modelId: activeProfile.modelId },
   );
+}
+
+async function summarizeConversationIfNeeded(): Promise<void> {
+  const messages = database.getMessages(conversationId, 100);
+  const existing = database.getConversationSummary(conversationId);
+  if (messages.length < 20 || messages.length <= (existing?.sourceMessageCount ?? 0) + 8) return;
+  const transcript = messages.slice(-40).map((message) => `${message.role}: ${message.content}`).join("\n").slice(0, 20_000);
+  try {
+    const client = new OpenAiCompatibleClient(activeProfile.baseUrl, { ...activeProfile, maxTokens: 384, toolsEnabled: false, temperature: 0.2 }, activeProfile.id === "local-ollama-default" ? apiKey : vault.get(activeProfile.id));
+    const result = await client.chat([{ role: "system", content: "Summarize this conversation in concise Chinese. Keep stable facts, decisions, preferences, unresolved tasks, and roleplay context. Do not invent facts." }, { role: "user", content: transcript }], []);
+    if (result.content?.trim()) database.saveConversationSummary(conversationId, result.content.trim(), messages.length);
+  } catch { /* Optional compression must never block a user task. */ }
+}
+
+async function importKnowledgeFile(filePath: string): Promise<void> {
+  const allowed = new Set([".txt", ".md", ".json", ".csv", ".yaml", ".yml"]);
+  if (!allowed.has(extname(filePath).toLowerCase())) throw new Error("当前只支持 TXT、Markdown、JSON、CSV 和 YAML 文本文件。");
+  if ((await stat(filePath)).size > 5 * 1024 * 1024) throw new Error("单个知识库文件不能超过 5 MB。");
+  const content = await readFile(filePath, "utf8");
+  const lines = content.split(/\r?\n/);
+  const chunks: Array<{ startLine: number; endLine: number; content: string }> = [];
+  for (let start = 0; start < lines.length; start += 80) {
+    const end = Math.min(lines.length, start + 80);
+    const chunk = lines.slice(start, end).join("\n").trim();
+    if (chunk) chunks.push({ startLine: start + 1, endLine: end, content: chunk });
+  }
+  database.upsertKnowledgeDocument({ path: resolve(filePath), name: basename(filePath), contentHash: createHash("sha256").update(content).digest("hex"), chunks });
 }
 
 async function listLocalModels(): Promise<string[]> {
@@ -177,6 +208,10 @@ app.whenReady().then(async () => {
   ipcMain.handle("xpaw:delete-memory", (_event, id: number) => database.deleteMemory(id));
   ipcMain.handle("xpaw:get-conversation-summary", (_event, id: number) => database.getConversationSummary(id));
   ipcMain.handle("xpaw:delete-conversation-summary", (_event, id: number) => database.deleteConversationSummary(id));
+  ipcMain.handle("xpaw:list-knowledge", () => database.listKnowledgeDocuments());
+  ipcMain.handle("xpaw:import-knowledge", (_event, filePath: string) => importKnowledgeFile(filePath));
+  ipcMain.handle("xpaw:delete-knowledge", (_event, id: number) => database.deleteKnowledgeDocument(id));
+  ipcMain.handle("xpaw:search-knowledge", (_event, query: string) => database.searchKnowledge(query));
   ipcMain.handle("xpaw:list-tasks", () => database.listTasks());
   ipcMain.handle("xpaw:get-task-events", (_event, taskId: number) => database.getTaskEvents(taskId));
   ipcMain.handle("xpaw:rerun-task", async (_event, taskId: number) => {

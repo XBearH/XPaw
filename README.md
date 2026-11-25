@@ -16,6 +16,7 @@ XPaw is a local-first desktop AI character and task agent. It supports ordinary 
 - User profile, explicit long-term memories, local memory search, and manageable conversation summaries.
 - Local text knowledge base with document chunks, FTS5 search, and source citations.
 - Controlled MCP client for local stdio tool servers with per-tool authorization.
+- Local Plugin SDK with manifest validation, isolated Node processes, JSON Lines RPC, and per-tool authorization.
 
 ## Requirements
 
@@ -127,6 +128,22 @@ XPaw can connect to a user-configured local stdio MCP Server. A connection start
 - `deny`: do not expose the tool to the agent.
 
 MCP calls use the existing task audit, confirmation, cancellation, and tool timeout boundaries. Version `v0.6` intentionally does not install MCP packages automatically and does not enable remote HTTP MCP calls. Remote MCP needs a separate data disclosure and authentication design before it can be enabled.
+
+## Plugin SDK
+
+Plugins are local directories added manually from the desktop plugin page. Every plugin needs an `xpaw.plugin.json` manifest:
+
+```json
+{
+  "id": "example-echo",
+  "name": "Echo Example",
+  "version": "0.1.0",
+  "main": "index.js",
+  "permissions": []
+}
+```
+
+XPaw launches the declared entry in an isolated Node child process. The plugin communicates only through JSON Lines RPC using `tools/list` and `tools/call`; it does not receive XPaw's Electron IPC, database connection, model keys, or main-process APIs. Plugin tools default to `ask`, and use the same audit, confirmation, cancellation, and timeout boundaries as built-in and MCP tools. See [`examples/echo-plugin`](examples/echo-plugin) for a minimal protocol example.
 
 If a reboot stops the local model server, first launch the Ollama application, or run the following in a separate PowerShell window while the iKuuuVPN local proxy is available:
 

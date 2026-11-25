@@ -1,7 +1,7 @@
 import Database from "better-sqlite3";
 import { mkdirSync } from "node:fs";
 import { dirname } from "node:path";
-import type { ChatMessage, KnowledgeChunk, KnowledgeDocument, McpServerProfile, McpToolInfo, MemoryItem, ModelProfile, TaskEvent, TaskStatus, TaskSummary, UserProfile } from "./types.js";
+import type { ChatMessage, KnowledgeChunk, KnowledgeDocument, McpServerProfile, McpToolInfo, MemoryItem, ModelProfile, PluginProfile, PluginToolInfo, TaskEvent, TaskStatus, TaskSummary, UserProfile } from "./types.js";
 
 export class XPawDatabase {
   private readonly db: Database.Database;
@@ -164,6 +164,22 @@ export class XPawDatabase {
         tool_name TEXT NOT NULL,
         authorization TEXT NOT NULL DEFAULT 'ask',
         PRIMARY KEY (server_id, tool_name)
+      );
+      CREATE TABLE IF NOT EXISTS plugins (
+        id TEXT PRIMARY KEY,
+        name TEXT NOT NULL,
+        version TEXT NOT NULL,
+        path TEXT NOT NULL UNIQUE,
+        permissions_json TEXT NOT NULL DEFAULT '[]',
+        enabled INTEGER NOT NULL DEFAULT 1,
+        created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+        updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+      );
+      CREATE TABLE IF NOT EXISTS plugin_tool_permissions (
+        plugin_id TEXT NOT NULL REFERENCES plugins(id) ON DELETE CASCADE,
+        tool_name TEXT NOT NULL,
+        authorization TEXT NOT NULL DEFAULT 'ask',
+        PRIMARY KEY (plugin_id, tool_name)
       );
     `);
   }
@@ -375,6 +391,31 @@ export class XPawDatabase {
   setMcpToolAuthorization(serverId: string, toolName: string, authorization: McpToolInfo["authorization"]): void {
     this.db.prepare(`INSERT INTO mcp_tool_permissions (server_id, tool_name, authorization) VALUES (?, ?, ?)
       ON CONFLICT(server_id, tool_name) DO UPDATE SET authorization = excluded.authorization`).run(serverId, toolName, authorization);
+  }
+
+  listPlugins(): PluginProfile[] {
+    const rows = this.db.prepare("SELECT id, name, version, path, permissions_json AS permissionsJson, enabled, created_at AS createdAt, updated_at AS updatedAt FROM plugins ORDER BY updated_at DESC").all() as Array<{ id: string; name: string; version: string; path: string; permissionsJson: string; enabled: number; createdAt: string; updatedAt: string }>;
+    return rows.map((row) => ({ id: row.id, name: row.name, version: row.version, path: row.path, permissions: JSON.parse(row.permissionsJson) as string[], enabled: Boolean(row.enabled), createdAt: row.createdAt, updatedAt: row.updatedAt }));
+  }
+
+  upsertPlugin(profile: Omit<PluginProfile, "createdAt" | "updatedAt">): void {
+    this.db.prepare(`INSERT INTO plugins (id, name, version, path, permissions_json, enabled) VALUES (@id, @name, @version, @path, @permissionsJson, @enabled)
+      ON CONFLICT(id) DO UPDATE SET name = excluded.name, version = excluded.version, path = excluded.path, permissions_json = excluded.permissions_json, enabled = excluded.enabled, updated_at = CURRENT_TIMESTAMP`).run({ ...profile, permissionsJson: JSON.stringify(profile.permissions), enabled: Number(profile.enabled) });
+  }
+
+  deletePlugin(id: string): void {
+    this.db.prepare("DELETE FROM plugin_tool_permissions WHERE plugin_id = ?").run(id);
+    this.db.prepare("DELETE FROM plugins WHERE id = ?").run(id);
+  }
+
+  getPluginToolAuthorization(pluginId: string, toolName: string): PluginToolInfo["authorization"] {
+    const row = this.db.prepare("SELECT authorization FROM plugin_tool_permissions WHERE plugin_id = ? AND tool_name = ?").get(pluginId, toolName) as { authorization: PluginToolInfo["authorization"] } | undefined;
+    return row?.authorization ?? "ask";
+  }
+
+  setPluginToolAuthorization(pluginId: string, toolName: string, authorization: PluginToolInfo["authorization"]): void {
+    this.db.prepare(`INSERT INTO plugin_tool_permissions (plugin_id, tool_name, authorization) VALUES (?, ?, ?)
+      ON CONFLICT(plugin_id, tool_name) DO UPDATE SET authorization = excluded.authorization`).run(pluginId, toolName, authorization);
   }
 
   auditToolRun(input: {

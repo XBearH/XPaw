@@ -150,3 +150,30 @@ export interface McpToolInfo {
   inputSchema: Record<string, unknown>;
   authorization: "ask" | "always" | "deny";
 }
+
+export interface PluginManifest {
+  id: string;
+  name: string;
+  version: string;
+  main: string;
+  permissions: string[];
+}
+
+export interface PluginProfile {
+  id: string;
+  name: string;
+  version: string;
+  path: string;
+  permissions: string[];
+  enabled: boolean;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface PluginToolInfo {
+  pluginId: string;
+  name: string;
+  description: string;
+  inputSchema: Record<string, unknown>;
+  authorization: "ask" | "always" | "deny";
+}

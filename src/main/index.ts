@@ -9,9 +9,10 @@ import { compileSystemPrompt, loadCharacterCard, type CharacterCard } from "../c
 import { XPawDatabase } from "../database.js";
 import { OpenAiCompatibleClient } from "../ollama.js";
 import { WorkspaceTools } from "../tools.js";
-import type { McpServerProfile, McpToolInfo, MemoryItem, ModelProfile, UserProfile } from "../types.js";
+import type { McpServerProfile, McpToolInfo, MemoryItem, ModelProfile, PluginProfile, PluginToolInfo, UserProfile } from "../types.js";
 import { SecretVault } from "./secret-vault.js";
 import { McpClientManager } from "./mcp-client.js";
+import { PluginHost } from "./plugin-host.js";
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), "../..");
 const workspacePath = resolve(process.env.XPAW_WORKSPACE || join(root, "workspace"));
@@ -29,6 +30,8 @@ let character: CharacterCard;
 const vault = new SecretVault(join(root, "data", "secrets.json"));
 const activeRequests = new Map<string, AbortController>();
 const mcp = new McpClientManager();
+const plugins = new PluginHost();
+const pluginTools = new Map<string, PluginToolInfo[]>();
 
 function startTaskStream(sender: { send(channel: string, ...args: unknown[]): void }, input: { requestId: string; message: string }, saveUser = true): void {
   if (activeRequests.has(input.requestId)) throw new Error("This request is already active.");
@@ -83,7 +86,7 @@ function applyCharacterOverride(): void {
 
 function createAgent(character: Awaited<ReturnType<typeof loadCharacterCard>>): Agent {
   const mcpProfiles = database.listMcpServers();
-  const externalTools = mcp.getAuthorizedToolDefinitions(mcpProfiles, (serverId, toolName) => database.getMcpToolAuthorization(serverId, toolName));
+  const externalTools = [...mcp.getAuthorizedToolDefinitions(mcpProfiles, (serverId, toolName) => database.getMcpToolAuthorization(serverId, toolName)), ...plugins.getToolDefinitions(database.listPlugins(), pluginTools)];
   return new Agent(
     new OpenAiCompatibleClient(activeProfile.baseUrl, activeProfile, activeProfile.id === "local-ollama-default" ? apiKey : vault.get(activeProfile.id)),
     database,
@@ -103,7 +106,7 @@ function createAgent(character: Awaited<ReturnType<typeof loadCharacterCard>>): 
     compileSystemPrompt(character, workspacePath, database.getUserProfile()),
     { provider: activeProfile.provider, modelId: activeProfile.modelId },
     externalTools,
-    async (name, args) => executeMcpTool(name, args),
+    async (name, args) => executeExternalTool(name, args),
   );
 }
 
@@ -113,7 +116,7 @@ function createAgentForRequest(userInput: string): Agent {
   const summary = database.getConversationSummary(conversationId)?.content;
   const knowledge = database.searchKnowledge(userInput);
   const mcpProfiles = database.listMcpServers();
-  const externalTools = mcp.getAuthorizedToolDefinitions(mcpProfiles, (serverId, toolName) => database.getMcpToolAuthorization(serverId, toolName));
+  const externalTools = [...mcp.getAuthorizedToolDefinitions(mcpProfiles, (serverId, toolName) => database.getMcpToolAuthorization(serverId, toolName)), ...plugins.getToolDefinitions(database.listPlugins(), pluginTools)];
   return new Agent(
     new OpenAiCompatibleClient(activeProfile.baseUrl, activeProfile, activeProfile.id === "local-ollama-default" ? apiKey : vault.get(activeProfile.id)),
     database,
@@ -122,8 +125,24 @@ function createAgentForRequest(userInput: string): Agent {
     compileSystemPrompt(character, workspacePath, profile, memories, summary, knowledge),
     { provider: activeProfile.provider, modelId: activeProfile.modelId },
     externalTools,
-    async (name, args) => executeMcpTool(name, args),
+    async (name, args) => executeExternalTool(name, args),
   );
+}
+
+async function executeExternalTool(name: string, args: Record<string, unknown>): Promise<{ content: string; summary: string }> {
+  if (name.startsWith("mcp_")) return executeMcpTool(name, args);
+  const resolved = plugins.resolveTool(name);
+  if (!resolved) throw new Error("外部工具映射不存在，请重新发现工具。 ");
+  const profile = database.listPlugins().find((item) => item.id === resolved.pluginId);
+  if (!profile || !profile.enabled) throw new Error("插件已禁用或不存在。");
+  const authorization = database.getPluginToolAuthorization(profile.id, resolved.toolName);
+  if (authorization === "deny") throw new Error("该插件工具已被拒绝。");
+  if (authorization === "ask") {
+    const result = await dialog.showMessageBox({ type: "warning", title: "Confirm plugin tool", message: `XPaw requests permission to call plugin tool: ${resolved.toolName}`, detail: `Plugin: ${profile.name}\nArguments: ${JSON.stringify(args, null, 2)}`, buttons: ["Approve once", "Deny"], defaultId: 1, cancelId: 1 });
+    if (result.response !== 0) throw new Error("用户拒绝了插件工具调用。");
+  }
+  const content = await plugins.callTool(profile, resolved.toolName, args);
+  return { content, summary: `Plugin ${profile.name}/${resolved.toolName} 已完成。` };
 }
 
 async function executeMcpTool(key: string, args: Record<string, unknown>): Promise<{ content: string; summary: string }> {
@@ -252,6 +271,20 @@ app.whenReady().then(async () => {
     if (database.getMcpToolAuthorization(serverId, toolName) === "deny") throw new Error("该 MCP 工具已被拒绝。");
     return mcp.callTool(profile, toolName, args);
   });
+  ipcMain.handle("xpaw:list-plugins", () => database.listPlugins());
+  ipcMain.handle("xpaw:add-plugin", async (_event, path: string) => {
+    const loaded = await plugins.loadManifest(path);
+    database.upsertPlugin({ id: loaded.manifest.id, name: loaded.manifest.name, version: loaded.manifest.version, path: loaded.path, permissions: loaded.manifest.permissions, enabled: true });
+  });
+  ipcMain.handle("xpaw:delete-plugin", async (_event, id: string) => { await plugins.disconnect(id); database.deletePlugin(id); pluginTools.delete(id); });
+  ipcMain.handle("xpaw:list-plugin-tools", async (_event, id: string) => {
+    const profile = database.listPlugins().find((item) => item.id === id);
+    if (!profile) throw new Error("插件不存在。");
+    const tools = await plugins.listTools(profile, (toolName) => database.getPluginToolAuthorization(id, toolName));
+    pluginTools.set(id, tools);
+    return tools;
+  });
+  ipcMain.handle("xpaw:set-plugin-tool-authorization", (_event, pluginId: string, toolName: string, authorization: PluginToolInfo["authorization"]) => database.setPluginToolAuthorization(pluginId, toolName, authorization));
   ipcMain.handle("xpaw:list-tasks", () => database.listTasks());
   ipcMain.handle("xpaw:get-task-events", (_event, taskId: number) => database.getTaskEvents(taskId));
   ipcMain.handle("xpaw:rerun-task", async (_event, taskId: number) => {

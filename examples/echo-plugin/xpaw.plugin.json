@@ -1,0 +1,7 @@
+{
+  "id": "example-echo",
+  "name": "Echo Example",
+  "version": "0.1.0",
+  "main": "index.js",
+  "permissions": []
+}

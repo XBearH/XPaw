@@ -15,6 +15,7 @@ XPaw is a local-first desktop AI character and task agent. It supports ordinary 
 - Workspace-scoped file list, read, search, and confirmation-gated text-file write tools.
 - User profile, explicit long-term memories, local memory search, and manageable conversation summaries.
 - Local text knowledge base with document chunks, FTS5 search, and source citations.
+- Controlled MCP client for local stdio tool servers with per-tool authorization.
 
 ## Requirements
 
@@ -116,6 +117,16 @@ XPaw keeps memory controllable and local:
 XPaw can index user-selected local text files without copying the original files into the project. Version `v0.5` supports UTF-8 `.txt`, `.md`, `.json`, `.csv`, `.yaml`, and `.yml` files up to 5 MB. Documents are split into local SQLite FTS5 chunks. When relevant excerpts are used, XPaw is instructed to cite them as `[来源：filename:line]`.
 
 PDF, DOCX, XLSX, OCR, embeddings, and vector search are intentionally not included yet. The knowledge page clearly rejects unsupported formats instead of pretending to parse them.
+
+## MCP Client
+
+XPaw can connect to a user-configured local stdio MCP Server. A connection starts with tool discovery only: tools are not automatically trusted. Each discovered tool has an explicit authorization state:
+
+- `ask`: request desktop approval for every call.
+- `always`: allow the tool to run after the user explicitly selects persistent approval.
+- `deny`: do not expose the tool to the agent.
+
+MCP calls use the existing task audit, confirmation, cancellation, and tool timeout boundaries. Version `v0.6` intentionally does not install MCP packages automatically and does not enable remote HTTP MCP calls. Remote MCP needs a separate data disclosure and authentication design before it can be enabled.
 
 If a reboot stops the local model server, first launch the Ollama application, or run the following in a separate PowerShell window while the iKuuuVPN local proxy is available:
 

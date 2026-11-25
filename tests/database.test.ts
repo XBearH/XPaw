@@ -85,4 +85,14 @@ describe("XPawDatabase", () => {
     database.deleteKnowledgeDocument(document.id);
     expect(database.listKnowledgeDocuments()).toHaveLength(0);
   });
+
+  it("persists MCP server profiles and per-tool authorization", () => {
+    database.upsertMcpServer({ id: "mcp-test", name: "Test MCP", transport: "stdio", command: "node", args: ["server.js"], url: null, enabled: true });
+    expect(database.listMcpServers()).toMatchObject([{ id: "mcp-test", args: ["server.js"], enabled: true }]);
+    expect(database.getMcpToolAuthorization("mcp-test", "echo")).toBe("ask");
+    database.setMcpToolAuthorization("mcp-test", "echo", "always");
+    expect(database.getMcpToolAuthorization("mcp-test", "echo")).toBe("always");
+    database.deleteMcpServer("mcp-test");
+    expect(database.listMcpServers()).toHaveLength(0);
+  });
 });

@@ -130,3 +130,23 @@ export interface KnowledgeChunk {
   endLine: number;
   content: string;
 }
+
+export interface McpServerProfile {
+  id: string;
+  name: string;
+  transport: "stdio" | "http";
+  command: string | null;
+  args: string[];
+  url: string | null;
+  enabled: boolean;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface McpToolInfo {
+  serverId: string;
+  name: string;
+  description: string;
+  inputSchema: Record<string, unknown>;
+  authorization: "ask" | "always" | "deny";
+}

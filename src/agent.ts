@@ -1,6 +1,6 @@
 import type { XPawDatabase } from "./database.js";
 import { toolDefinitions, WorkspaceTools } from "./tools.js";
-import type { AgentStreamEvent, ChatMessage, ModelClient, ToolCall, ToolResult } from "./types.js";
+import type { AgentStreamEvent, ChatMessage, ModelClient, ToolCall, ToolDefinition, ToolResult } from "./types.js";
 
 export type Confirm = (question: string) => Promise<boolean>;
 const TOOL_TIMEOUT_MS = 60_000;
@@ -13,6 +13,8 @@ export class Agent {
     private readonly confirm: Confirm,
     private readonly systemPrompt: string,
     private readonly modelInfo: { provider: string; modelId: string } = { provider: "unknown", modelId: "unknown" },
+    private readonly externalTools: ToolDefinition[] = [],
+    private readonly executeExternal?: (name: string, args: Record<string, unknown>) => Promise<ToolResult>,
   ) {}
 
   async respond(conversationId: number, userInput: string): Promise<string> {
@@ -26,7 +28,7 @@ export class Agent {
       const startedAt = Date.now();
       let response;
       try {
-        response = await this.model.chat(messages, toolDefinitions);
+        response = await this.model.chat(messages, [...toolDefinitions, ...this.externalTools]);
         this.database.recordModelRun({
           conversationId,
           provider: this.modelInfo.provider,
@@ -82,7 +84,7 @@ export class Agent {
         const startedAt = Date.now();
         let response;
         try {
-          const stream = this.model.streamChat(messages, toolDefinitions, signal);
+          const stream = this.model.streamChat(messages, [...toolDefinitions, ...this.externalTools], signal);
           for await (const event of stream) {
             if (event.type === "text_delta") { finalContent += event.delta; yield event; }
             else response = event.response;
@@ -137,7 +139,9 @@ export class Agent {
     }
 
     const toolName = call.function.name;
-    if (!["list_files", "read_file", "search_files", "write_file"].includes(toolName)) {
+    const builtin = ["list_files", "read_file", "search_files", "write_file"].includes(toolName);
+    const external = this.externalTools.some((tool) => tool.function.name === toolName);
+    if (!builtin && !external) {
       return this.recordFailure(conversationId, call, `Tool ${toolName} is not available.`);
     }
 
@@ -154,7 +158,8 @@ export class Agent {
     }
 
     try {
-      const operation = toolName === "list_files" ? this.tools.listFiles(args)
+      const operation = external && this.executeExternal ? this.executeExternal(toolName, args as Record<string, unknown>)
+        : toolName === "list_files" ? this.tools.listFiles(args)
         : toolName === "read_file" ? this.tools.readFile(args)
           : toolName === "search_files" ? this.tools.searchFiles(args)
             : this.tools.writeFile(args);

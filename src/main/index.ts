@@ -9,8 +9,9 @@ import { compileSystemPrompt, loadCharacterCard, type CharacterCard } from "../c
 import { XPawDatabase } from "../database.js";
 import { OpenAiCompatibleClient } from "../ollama.js";
 import { WorkspaceTools } from "../tools.js";
-import type { MemoryItem, ModelProfile, UserProfile } from "../types.js";
+import type { McpServerProfile, McpToolInfo, MemoryItem, ModelProfile, UserProfile } from "../types.js";
 import { SecretVault } from "./secret-vault.js";
+import { McpClientManager } from "./mcp-client.js";
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), "../..");
 const workspacePath = resolve(process.env.XPAW_WORKSPACE || join(root, "workspace"));
@@ -27,6 +28,7 @@ let activeProfile: ModelProfile;
 let character: CharacterCard;
 const vault = new SecretVault(join(root, "data", "secrets.json"));
 const activeRequests = new Map<string, AbortController>();
+const mcp = new McpClientManager();
 
 function startTaskStream(sender: { send(channel: string, ...args: unknown[]): void }, input: { requestId: string; message: string }, saveUser = true): void {
   if (activeRequests.has(input.requestId)) throw new Error("This request is already active.");
@@ -80,6 +82,8 @@ function applyCharacterOverride(): void {
 }
 
 function createAgent(character: Awaited<ReturnType<typeof loadCharacterCard>>): Agent {
+  const mcpProfiles = database.listMcpServers();
+  const externalTools = mcp.getAuthorizedToolDefinitions(mcpProfiles, (serverId, toolName) => database.getMcpToolAuthorization(serverId, toolName));
   return new Agent(
     new OpenAiCompatibleClient(activeProfile.baseUrl, activeProfile, activeProfile.id === "local-ollama-default" ? apiKey : vault.get(activeProfile.id)),
     database,
@@ -98,6 +102,8 @@ function createAgent(character: Awaited<ReturnType<typeof loadCharacterCard>>): 
     },
     compileSystemPrompt(character, workspacePath, database.getUserProfile()),
     { provider: activeProfile.provider, modelId: activeProfile.modelId },
+    externalTools,
+    async (name, args) => executeMcpTool(name, args),
   );
 }
 
@@ -106,6 +112,8 @@ function createAgentForRequest(userInput: string): Agent {
   const memories = database.searchMemories(userInput);
   const summary = database.getConversationSummary(conversationId)?.content;
   const knowledge = database.searchKnowledge(userInput);
+  const mcpProfiles = database.listMcpServers();
+  const externalTools = mcp.getAuthorizedToolDefinitions(mcpProfiles, (serverId, toolName) => database.getMcpToolAuthorization(serverId, toolName));
   return new Agent(
     new OpenAiCompatibleClient(activeProfile.baseUrl, activeProfile, activeProfile.id === "local-ollama-default" ? apiKey : vault.get(activeProfile.id)),
     database,
@@ -113,7 +121,24 @@ function createAgentForRequest(userInput: string): Agent {
     async (question) => (await dialog.showMessageBox({ type: "warning", title: "Confirm file write", message: "XPaw requests permission to write a file.", detail: question, buttons: ["Approve", "Deny"], defaultId: 1, cancelId: 1 })).response === 0,
     compileSystemPrompt(character, workspacePath, profile, memories, summary, knowledge),
     { provider: activeProfile.provider, modelId: activeProfile.modelId },
+    externalTools,
+    async (name, args) => executeMcpTool(name, args),
   );
+}
+
+async function executeMcpTool(key: string, args: Record<string, unknown>): Promise<{ content: string; summary: string }> {
+  const resolved = mcp.resolveTool(key);
+  if (!resolved) throw new Error("MCP 工具映射不存在，请重新发现工具。 ");
+  const profile = database.listMcpServers().find((server) => server.id === resolved.serverId);
+  if (!profile || !profile.enabled) throw new Error("MCP Server 已禁用或不存在。");
+  const authorization = database.getMcpToolAuthorization(resolved.serverId, resolved.toolName);
+  if (authorization === "deny") throw new Error("该 MCP 工具已被拒绝。");
+  if (authorization === "ask") {
+    const result = await dialog.showMessageBox({ type: "warning", title: "Confirm MCP tool", message: `XPaw requests permission to call MCP tool: ${resolved.toolName}`, detail: `Server: ${profile.name}\nArguments: ${JSON.stringify(args, null, 2)}`, buttons: ["Approve once", "Deny"], defaultId: 1, cancelId: 1 });
+    if (result.response !== 0) throw new Error("用户拒绝了 MCP 工具调用。");
+  }
+  const content = await mcp.callTool(profile, resolved.toolName, args);
+  return { content, summary: `MCP ${profile.name}/${resolved.toolName} 已完成。` };
 }
 
 async function summarizeConversationIfNeeded(): Promise<void> {
@@ -212,6 +237,21 @@ app.whenReady().then(async () => {
   ipcMain.handle("xpaw:import-knowledge", (_event, filePath: string) => importKnowledgeFile(filePath));
   ipcMain.handle("xpaw:delete-knowledge", (_event, id: number) => database.deleteKnowledgeDocument(id));
   ipcMain.handle("xpaw:search-knowledge", (_event, query: string) => database.searchKnowledge(query));
+  ipcMain.handle("xpaw:list-mcp-servers", () => database.listMcpServers());
+  ipcMain.handle("xpaw:save-mcp-server", (_event, profile: Omit<McpServerProfile, "createdAt" | "updatedAt">) => database.upsertMcpServer(profile));
+  ipcMain.handle("xpaw:delete-mcp-server", async (_event, id: string) => { await mcp.disconnect(id); database.deleteMcpServer(id); });
+  ipcMain.handle("xpaw:list-mcp-tools", async (_event, id: string) => {
+    const profile = database.listMcpServers().find((server) => server.id === id);
+    if (!profile) throw new Error("MCP Server 不存在。");
+    return mcp.listTools(profile, (toolName) => database.getMcpToolAuthorization(id, toolName));
+  });
+  ipcMain.handle("xpaw:set-mcp-tool-authorization", (_event, serverId: string, toolName: string, authorization: McpToolInfo["authorization"]) => database.setMcpToolAuthorization(serverId, toolName, authorization));
+  ipcMain.handle("xpaw:test-mcp-tool", async (_event, serverId: string, toolName: string, args: Record<string, unknown>) => {
+    const profile = database.listMcpServers().find((server) => server.id === serverId);
+    if (!profile) throw new Error("MCP Server 不存在。");
+    if (database.getMcpToolAuthorization(serverId, toolName) === "deny") throw new Error("该 MCP 工具已被拒绝。");
+    return mcp.callTool(profile, toolName, args);
+  });
   ipcMain.handle("xpaw:list-tasks", () => database.listTasks());
   ipcMain.handle("xpaw:get-task-events", (_event, taskId: number) => database.getTaskEvents(taskId));
   ipcMain.handle("xpaw:rerun-task", async (_event, taskId: number) => {

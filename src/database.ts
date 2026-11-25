@@ -1,7 +1,7 @@
 import Database from "better-sqlite3";
 import { mkdirSync } from "node:fs";
 import { dirname } from "node:path";
-import type { ChatMessage, KnowledgeChunk, KnowledgeDocument, MemoryItem, ModelProfile, TaskEvent, TaskStatus, TaskSummary, UserProfile } from "./types.js";
+import type { ChatMessage, KnowledgeChunk, KnowledgeDocument, McpServerProfile, McpToolInfo, MemoryItem, ModelProfile, TaskEvent, TaskStatus, TaskSummary, UserProfile } from "./types.js";
 
 export class XPawDatabase {
   private readonly db: Database.Database;
@@ -148,6 +148,23 @@ export class XPawDatabase {
       CREATE TRIGGER IF NOT EXISTS knowledge_chunks_ad AFTER DELETE ON knowledge_chunks BEGIN
         INSERT INTO knowledge_chunks_fts(knowledge_chunks_fts, rowid, content) VALUES ('delete', old.id, old.content);
       END;
+      CREATE TABLE IF NOT EXISTS mcp_servers (
+        id TEXT PRIMARY KEY,
+        name TEXT NOT NULL,
+        transport TEXT NOT NULL,
+        command TEXT,
+        args_json TEXT NOT NULL DEFAULT '[]',
+        url TEXT,
+        enabled INTEGER NOT NULL DEFAULT 1,
+        created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+        updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+      );
+      CREATE TABLE IF NOT EXISTS mcp_tool_permissions (
+        server_id TEXT NOT NULL REFERENCES mcp_servers(id) ON DELETE CASCADE,
+        tool_name TEXT NOT NULL,
+        authorization TEXT NOT NULL DEFAULT 'ask',
+        PRIMARY KEY (server_id, tool_name)
+      );
     `);
   }
 
@@ -333,6 +350,31 @@ export class XPawDatabase {
     if (tokens.length === 0) return [];
     const expression = tokens.map((token) => `"${token.replaceAll('"', '""')}"`).join(" OR ");
     return this.db.prepare(`SELECT c.id, c.document_id AS documentId, d.path, d.name, c.start_line AS startLine, c.end_line AS endLine, c.content FROM knowledge_chunks_fts f JOIN knowledge_chunks c ON c.id = f.rowid JOIN knowledge_documents d ON d.id = c.document_id WHERE knowledge_chunks_fts MATCH ? ORDER BY bm25(knowledge_chunks_fts) LIMIT ?`).all(expression, limit) as KnowledgeChunk[];
+  }
+
+  listMcpServers(): McpServerProfile[] {
+    const rows = this.db.prepare("SELECT id, name, transport, command, args_json AS argsJson, url, enabled, created_at AS createdAt, updated_at AS updatedAt FROM mcp_servers ORDER BY updated_at DESC").all() as Array<{ id: string; name: string; transport: "stdio" | "http"; command: string | null; argsJson: string; url: string | null; enabled: number; createdAt: string; updatedAt: string }>;
+    return rows.map((row) => ({ id: row.id, name: row.name, transport: row.transport, command: row.command, args: JSON.parse(row.argsJson) as string[], url: row.url, enabled: Boolean(row.enabled), createdAt: row.createdAt, updatedAt: row.updatedAt }));
+  }
+
+  upsertMcpServer(profile: Omit<McpServerProfile, "createdAt" | "updatedAt">): void {
+    this.db.prepare(`INSERT INTO mcp_servers (id, name, transport, command, args_json, url, enabled) VALUES (@id, @name, @transport, @command, @argsJson, @url, @enabled)
+      ON CONFLICT(id) DO UPDATE SET name = excluded.name, transport = excluded.transport, command = excluded.command, args_json = excluded.args_json, url = excluded.url, enabled = excluded.enabled, updated_at = CURRENT_TIMESTAMP`).run({ ...profile, argsJson: JSON.stringify(profile.args), enabled: Number(profile.enabled) });
+  }
+
+  deleteMcpServer(id: string): void {
+    this.db.prepare("DELETE FROM mcp_tool_permissions WHERE server_id = ?").run(id);
+    this.db.prepare("DELETE FROM mcp_servers WHERE id = ?").run(id);
+  }
+
+  getMcpToolAuthorization(serverId: string, toolName: string): McpToolInfo["authorization"] {
+    const row = this.db.prepare("SELECT authorization FROM mcp_tool_permissions WHERE server_id = ? AND tool_name = ?").get(serverId, toolName) as { authorization: McpToolInfo["authorization"] } | undefined;
+    return row?.authorization ?? "ask";
+  }
+
+  setMcpToolAuthorization(serverId: string, toolName: string, authorization: McpToolInfo["authorization"]): void {
+    this.db.prepare(`INSERT INTO mcp_tool_permissions (server_id, tool_name, authorization) VALUES (?, ?, ?)
+      ON CONFLICT(server_id, tool_name) DO UPDATE SET authorization = excluded.authorization`).run(serverId, toolName, authorization);
   }
 
   auditToolRun(input: {

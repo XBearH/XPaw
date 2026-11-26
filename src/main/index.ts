@@ -463,6 +463,11 @@ app.whenReady().then(async () => {
     agent = createAgent(character);
     return { id: character.id, ...input };
   });
+  ipcMain.handle("xpaw:set-character-world-book", (_event, worldBookId: string | undefined) => {
+    character = { ...character, world_book_id: worldBookId || undefined };
+    database.upsertCharacterCard({ id: character.id, name: character.name, card: character as unknown as Record<string, unknown> });
+    agent = createAgent(character);
+  });
   createWindow();
   app.on("activate", () => { if (BrowserWindow.getAllWindows().length === 0) createWindow(); });
 });

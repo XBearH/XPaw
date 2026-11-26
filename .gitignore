@@ -8,6 +8,7 @@ workspace/*
 docs/DEVELOPMENT_NOTES.md
 docs/USER_MANUAL.md
 docs/NEXT_STAGE_ROADMAP.md
+docs/WEB_MOBILE_PLAN.md
 coverage/
 *.log
 OllamaSetup*.exe

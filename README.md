@@ -2,6 +2,8 @@
 
 XPaw is a local-first desktop AI character and task agent. It supports ordinary conversation and fictional roleplay as well as permission-gated local tasks. Characters, conversations, task audits, and usage records stay on the device by default.
 
+Current development line: `v1.0-alpha`. See [CHANGELOG.md](CHANGELOG.md) for public milestone notes.
+
 ## Current Features
 
 - Electron + React desktop application with streamed model output and stop generation.
@@ -188,6 +190,8 @@ XPaw separates roleplay data into three assets:
 - **Companion state**: what is happening now, including relationship label, current scene, summary, and checkpoints.
 
 Character cards can be imported from JSON or YAML, validated, and migrated to XPaw card spec v2. They can be exported without model settings, workspace permissions, API keys, or other machine-specific data. World book entries are injected only in roleplay mode when their keywords match the current user message.
+
+Scene checkpoints can be preserved as named fictional branches and later restored. Restoring a branch changes only companion/roleplay state; it does not modify user memory or run any real tool.
 
 ## Ollama Startup
 

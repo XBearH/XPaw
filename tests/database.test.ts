@@ -119,4 +119,12 @@ describe("XPawDatabase", () => {
     database.deleteWorldBook("world");
     expect(database.listWorldBooks()).toHaveLength(0);
   });
+
+  it("creates and restores isolated scene branches", () => {
+    const branchId = database.createSceneBranch("test-agent", "另一条支线", { relationshipLabel: "搭档", boundaries: "轻松", sceneTitle: "港口", sceneSetting: "清晨", sceneSummary: "准备出发" });
+    expect(database.listSceneBranches("test-agent")).toMatchObject([{ id: branchId, name: "另一条支线" }]);
+    expect(database.restoreSceneBranch(branchId)).toMatchObject({ sceneTitle: "港口", relationshipLabel: "搭档" });
+    database.deleteSceneBranch(branchId);
+    expect(database.listSceneBranches("test-agent")).toHaveLength(0);
+  });
 });

@@ -208,6 +208,17 @@ export class XPawDatabase {
         summary TEXT NOT NULL,
         created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
       );
+      CREATE TABLE IF NOT EXISTS scene_branches (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        character_id TEXT NOT NULL,
+        name TEXT NOT NULL,
+        relationship_label TEXT NOT NULL,
+        boundaries TEXT NOT NULL,
+        scene_title TEXT NOT NULL,
+        scene_setting TEXT NOT NULL,
+        scene_summary TEXT NOT NULL,
+        created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+      );
       CREATE TABLE IF NOT EXISTS character_cards (
         id TEXT PRIMARY KEY,
         name TEXT NOT NULL,
@@ -537,6 +548,25 @@ export class XPawDatabase {
 
   deleteSceneCheckpoint(id: number): void {
     this.db.prepare("DELETE FROM scene_checkpoints WHERE id = ?").run(id);
+  }
+
+  createSceneBranch(characterId: string, name: string, state: Omit<CompanionState, "updatedAt">): number {
+    const result = this.db.prepare("INSERT INTO scene_branches (character_id, name, relationship_label, boundaries, scene_title, scene_setting, scene_summary) VALUES (?, ?, ?, ?, ?, ?, ?)").run(characterId, name, state.relationshipLabel, state.boundaries, state.sceneTitle, state.sceneSetting, state.sceneSummary);
+    return Number(result.lastInsertRowid);
+  }
+
+  listSceneBranches(characterId: string): Array<{ id: number; name: string; state: Omit<CompanionState, "updatedAt">; createdAt: string }> {
+    const rows = this.db.prepare("SELECT id, name, relationship_label AS relationshipLabel, boundaries, scene_title AS sceneTitle, scene_setting AS sceneSetting, scene_summary AS sceneSummary, created_at AS createdAt FROM scene_branches WHERE character_id = ? ORDER BY id DESC").all(characterId) as Array<{ id: number; name: string; relationshipLabel: string; boundaries: string; sceneTitle: string; sceneSetting: string; sceneSummary: string; createdAt: string }>;
+    return rows.map((row) => ({ id: row.id, name: row.name, state: { relationshipLabel: row.relationshipLabel, boundaries: row.boundaries, sceneTitle: row.sceneTitle, sceneSetting: row.sceneSetting, sceneSummary: row.sceneSummary }, createdAt: row.createdAt }));
+  }
+
+  restoreSceneBranch(id: number): Omit<CompanionState, "updatedAt"> | undefined {
+    const row = this.db.prepare("SELECT relationship_label AS relationshipLabel, boundaries, scene_title AS sceneTitle, scene_setting AS sceneSetting, scene_summary AS sceneSummary FROM scene_branches WHERE id = ?").get(id) as Omit<CompanionState, "updatedAt"> | undefined;
+    return row;
+  }
+
+  deleteSceneBranch(id: number): void {
+    this.db.prepare("DELETE FROM scene_branches WHERE id = ?").run(id);
   }
 
   listCharacterCards(): StoredCharacterCard[] {

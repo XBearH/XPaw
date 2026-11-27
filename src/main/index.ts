@@ -347,6 +347,15 @@ app.whenReady().then(async () => {
   ipcMain.handle("xpaw:list-scene-checkpoints", () => database.listSceneCheckpoints(character.id));
   ipcMain.handle("xpaw:add-scene-checkpoint", (_event, title: string, summary: string) => database.addSceneCheckpoint(character.id, title, summary));
   ipcMain.handle("xpaw:delete-scene-checkpoint", (_event, id: number) => database.deleteSceneCheckpoint(id));
+  ipcMain.handle("xpaw:list-scene-branches", () => database.listSceneBranches(character.id));
+  ipcMain.handle("xpaw:create-scene-branch", (_event, name: string) => database.createSceneBranch(character.id, name, database.getCompanionState(character.id)));
+  ipcMain.handle("xpaw:restore-scene-branch", (_event, id: number) => {
+    const state = database.restoreSceneBranch(id);
+    if (!state) throw new Error("场景分支不存在。");
+    database.saveCompanionState(character.id, state);
+    return database.getCompanionState(character.id);
+  });
+  ipcMain.handle("xpaw:delete-scene-branch", (_event, id: number) => database.deleteSceneBranch(id));
   ipcMain.handle("xpaw:get-usage", (_event, filter?: { modelId?: string; days?: number }) => database.getUsageSummary(filter?.modelId, filter?.days));
   ipcMain.handle("xpaw:get-memory", () => ({ profile: database.getUserProfile(), memories: database.listMemories() }));
   ipcMain.handle("xpaw:save-user-profile", (_event, profile: UserProfile) => database.saveUserProfile(profile));
